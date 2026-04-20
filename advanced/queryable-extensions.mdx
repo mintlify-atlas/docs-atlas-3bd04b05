@@ -1,0 +1,256 @@
+---
+title: 'Queryable Extensions and LINQ Projection in AutoMapper'
+description: 'Use ProjectTo to push AutoMapper maps into SQL queries, eliminate SELECT N+1, and configure parameterized or explicitly expanded LINQ projections.'
+keywords: ['ProjectTo', 'IQueryable', 'LINQ projection', 'SELECT N+1', 'Entity Framework', 'queryable extensions', 'parameterization', 'explicit expansion', 'polymorphic projection']
+---
+
+When you map in-memory objects with `mapper.Map`, your ORM loads entire entity graphs before AutoMapper ever touches them. AutoMapper's queryable extensions solve this by translating your mapping configuration into a LINQ `Select` expression that the query provider compiles directly to SQL — so only the columns you actually need are fetched.
+
+## How projection differs from in-memory mapping
+
+Standard `mapper.Map` operates on fully materialised objects. `ProjectTo` attaches a `Select` clause to an `IQueryable` before the query executes, letting your ORM generate an optimised query instead.
+
+<CardGroup cols={2}>
+  <Card title="mapper.Map (in-memory)" icon="database">
+    The ORM loads all columns from all joined tables, then AutoMapper reads the in-memory objects. Related entities trigger additional queries unless you configure explicit eager loading.
+  </Card>
+  <Card title="ProjectTo (LINQ projection)" icon="bolt">
+    AutoMapper emits a LINQ `Select` expression. The query provider translates it to SQL that fetches only the columns required by your DTO — no explicit `Include` calls needed.
+  </Card>
+</CardGroup>
+
+## Basic usage
+
+Given these entity and DTO types:
+
+```csharp entities and dto
+public class OrderLine
+{
+  public int Id { get; set; }
+  public int OrderId { get; set; }
+  public Item Item { get; set; }
+  public decimal Quantity { get; set; }
+}
+
+public class Item
+{
+  public int Id { get; set; }
+  public string Name { get; set; }
+}
+
+public class OrderLineDTO
+{
+  public int Id { get; set; }
+  public int OrderId { get; set; }
+  public string Item { get; set; }
+  public decimal Quantity { get; set; }
+}
+```
+
+Configure a projection and call `ProjectTo`:
+
+```csharp configure and project
+var configuration = new MapperConfiguration(cfg =>
+    cfg.CreateProjection<OrderLine, OrderLineDTO>()
+    .ForMember(dto => dto.Item, conf => conf.MapFrom(ol => ol.Item.Name)), loggerFactory);
+
+public List<OrderLineDTO> GetLinesForOrder(int orderId)
+{
+  using (var context = new orderEntities())
+  {
+    return context.OrderLines.Where(ol => ol.OrderId == orderId)
+             .ProjectTo<OrderLineDTO>(configuration).ToList();
+  }
+}
+```
+
+`ProjectTo<OrderLineDTO>()` appends a `Select` to the `IQueryable`. Entity Framework sees the projection and generates a query that reads only the `Name` column from the `Item` table — the same SQL you would write by hand with a manual `Select` clause.
+
+<Warning>
+  `ProjectTo` must be the **last** call in your LINQ chain. ORMs build queries from entities, not DTOs. Apply all filtering and sorting on entities first, then project as the final step.
+</Warning>
+
+## The instance API
+
+Starting with version 8.0, `IMapper` exposes `ProjectTo` methods directly, which integrates naturally with dependency injection:
+
+```csharp IMapper.ProjectTo
+// Using IMapper injected via DI
+IQueryable<OrderLineDTO> query = mapper.ProjectTo<OrderLineDTO>(
+    context.OrderLines.Where(ol => ol.OrderId == orderId));
+```
+
+This delegates to `source.ProjectTo(ConfigurationProvider, parameters, membersToExpand)` internally and is equivalent to calling the static extension method with the configuration provider.
+
+## Preventing SELECT N+1 problems
+
+With `mapper.Map`, any unmapped navigation property triggers a lazy load for each row — the classic N+1 problem. `ProjectTo` eliminates this entirely because the mapping occurs at the SQL level. Nested collections are translated into correlated subqueries or joins by the ORM.
+
+AutoMapper generates an expression equivalent to:
+
+```csharp generated projection shape
+from i in db.Instructors
+orderby i.LastName
+select new InstructorIndexData.InstructorModel
+{
+    ID = i.ID,
+    FirstMidName = i.FirstMidName,
+    LastName = i.LastName,
+    HireDate = i.HireDate,
+    OfficeAssignmentLocation = i.OfficeAssignment.Location,
+    Courses = i.Courses.Select(c => new InstructorIndexData.InstructorCourseModel
+    {
+        CourseID = c.CourseID,
+        CourseTitle = c.Title
+    }).ToList()
+};
+```
+
+You do not need `Include` calls for `ProjectTo`. If you need filtered eager loading, express the filter directly in the map:
+
+```csharp filtered collection in map
+CreateProjection<Entity, Dto>().ForMember(d => d.Collection, o => o.MapFrom(s => s.Collection.Where(i => i.IsActive)));
+```
+
+## Custom projection with MapFrom
+
+When member names diverge or you need a calculated property, use the expression-based `MapFrom` overload. AutoMapper passes the expression to the query provider as-is:
+
+```csharp custom projection
+var configuration = new MapperConfiguration(cfg => cfg.CreateProjection<Customer, CustomerDto>()
+    .ForMember(d => d.FullName, opt => opt.MapFrom(c => c.FirstName + " " + c.LastName))
+    .ForMember(d => d.TotalContacts, opt => opt.MapFrom(c => c.Contacts.Count())), loggerFactory);
+```
+
+<Note>
+  The expression must be interpretable by your query provider. If Entity Framework or NHibernate rejects the expression, adjust it until the provider accepts it. Func-based overloads and custom resolvers are not supported.
+</Note>
+
+### Custom type conversion
+
+To replace a type conversion entirely in a projection, use the expression-based `ConvertUsing`:
+
+```csharp ConvertUsing in projection
+cfg.CreateProjection<Source, Dest>().ConvertUsing(src => new Dest { Value = 10 });
+```
+
+### Custom destination constructors
+
+When your destination type has a constructor that AutoMapper cannot match automatically, supply a construction expression:
+
+```csharp ConstructUsing in projection
+cfg.CreateProjection<Source, Dest>()
+    .ConstructUsing(src => new Dest(src.Value + 10));
+```
+
+### String conversion
+
+AutoMapper automatically appends `ToString()` when the destination member is a `string` and the source is not:
+
+```csharp automatic string conversion
+public class Order {
+    public OrderTypeEnum OrderType { get; set; }
+}
+public class OrderDto {
+    public string OrderType { get; set; }
+}
+var orders = dbContext.Orders.ProjectTo<OrderDto>(configuration).ToList();
+orders[0].OrderType.ShouldEqual("Online");
+```
+
+## Parameterization
+
+Projections sometimes need runtime values — for example, the current user's name. Capture a closure variable in your map and substitute it at projection time:
+
+```csharp define parameterized map
+string currentUserName = null;
+cfg.CreateProjection<Course, CourseModel>()
+    .ForMember(m => m.CurrentUserName, opt => opt.MapFrom(src => currentUserName));
+```
+
+```csharp project with runtime parameter
+dbContext.Courses.ProjectTo<CourseModel>(Config, new { currentUserName = Request.User.Name });
+```
+
+AutoMapper captures the closure field name from the expression, then substitutes the value before the query is sent to the provider, producing a parameterised query.
+
+You can also supply parameters as a dictionary, but this produces hard-coded constant values in the query rather than parameters:
+
+```csharp dictionary parameters (hard-coded values)
+dbContext.Courses.ProjectTo<CourseModel>(Config,
+    new Dictionary<string, object> { { "currentUserName", Request.User.Name } });
+```
+
+## Explicit expansion
+
+By default, `ProjectTo` expands all mapped members. In generic scenarios such as OData controllers, you may want to control which members are included. Set `ExplicitExpansion` on the relevant members in your map, then pass the members to expand at query time:
+
+```csharp explicit expansion
+// Expression-based
+dbContext.Orders.ProjectTo<OrderDto>(configuration,
+    dest => dest.Customer,
+    dest => dest.LineItems);
+
+// String-based
+dbContext.Orders.ProjectTo<OrderDto>(configuration,
+    null,
+    "Customer",
+    "LineItems");
+
+// Nested collection members
+dbContext.Orders.ProjectTo<OrderDto>(configuration,
+    null,
+    dest => dest.LineItems.Select(item => item.Product));
+```
+
+## Aggregations
+
+When a destination property is named to match a LINQ aggregate — for example, `ContactsCount` matching `Count()` — AutoMapper wires this up automatically. For complex aggregations, use `MapFrom`:
+
+```csharp complex aggregation
+cfg.CreateProjection<Course, CourseModel>()
+    .ForMember(m => m.EnrollmentsStartingWithA,
+          opt => opt.MapFrom(c => c.Enrollments.Where(e => e.Student.LastName.StartsWith("A")).Count()));
+```
+
+## Polymorphic projection
+
+AutoMapper attempts polymorphic projections when the source type hierarchy uses inheritance strategies supported by your ORM. If the query provider cannot handle them, disable this behaviour:
+
+```csharp disable polymorphic projection
+configuration.PolymorphicProjectionsEnabled = false;
+```
+
+AutoMapper will project every row as the base destination type instead of inspecting the runtime source type.
+
+## Supported and unsupported mapping options
+
+Not every mapping option translates to a LINQ expression. The following table summarises what the query provider can and cannot handle.
+
+<AccordionGroup>
+  <Accordion title="Supported mapping options">
+    - `MapFrom` (expression-based)
+    - `ConvertUsing` (expression-based)
+    - `Ignore`
+    - `NullSubstitute`
+    - Value transformers
+    - `IncludeMembers`
+    - Runtime polymorphic mapping with `Include` / `IncludeBase`
+  </Accordion>
+  <Accordion title="Unsupported mapping options">
+    - `Condition`
+    - `SetMappingOrder`
+    - `UseDestinationValue`
+    - `MapFrom` (Func-based)
+    - `Before/AfterMap`
+    - Custom resolvers
+    - Custom type converters
+    - `ForPath`
+    - Value converters
+    - Calculated properties on your domain object
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  If a mapping option you rely on is not supported, apply that transformation after materialising the query with `.ToList()` and a subsequent `mapper.Map` call, or encode the logic as a supported expression in `MapFrom`.
+</Tip>

@@ -1,0 +1,84 @@
+---
+title: 'Upgrading AutoMapper to version 13'
+description: 'AutoMapper 13 targets .NET 6, moves DI into core, removes AllowAdditiveTypeMapCreation, adds Context.State, and stops using custom Equals for object identity.'
+keywords: ['automapper', 'v13', 'upgrade', 'migration', 'dependency injection', 'breaking changes']
+---
+
+AutoMapper 13 targets .NET 6 and consolidates the library surface by folding the separate dependency injection package into the core package. Several less common APIs were removed or changed in ways that affect existing code, so review each section below before upgrading.
+
+## Target framework
+
+AutoMapper 13 targets **.NET 6**. Earlier .NET versions are not supported.
+
+## `AddAutoMapper` is now part of the core package
+
+<Warning>
+The `AutoMapper.Extensions.Microsoft.DependencyInjection` NuGet package is discontinued. Remove it from your project and rely on the core `AutoMapper` package for the `AddAutoMapper` extension method.
+</Warning>
+
+If your project references the DI extension package, remove it:
+
+```xml
+<!-- Remove this package reference -->
+<PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="*" />
+```
+
+The `AddAutoMapper` extension method is now part of `AutoMapper` itself, so no import changes are needed as long as you reference the core package.
+
+## Breaking changes
+
+### `AllowAdditiveTypeMapCreation` removed
+
+The `AllowAdditiveTypeMapCreation` option has been removed. Each `source → destination` type pair must now be configured with a single `CreateMap` call.
+
+<Warning>
+Calling `CreateMap` more than once for the same source and destination type pair will produce an error. Consolidate your configuration before upgrading.
+</Warning>
+
+If you previously relied on multiple `CreateMap` calls to build up configuration for the same type pair, use [mapping inheritance](https://docs.automapper.org/en/stable/Mapping-inheritance.html) instead:
+
+```csharp
+// Instead of multiple CreateMap calls for the same pair,
+// use Include/IncludeBase for shared configuration.
+cfg.CreateMap<BaseSource, BaseDest>();
+
+cfg.CreateMap<DerivedSource, DerivedDest>()
+    .IncludeBase<BaseSource, BaseDest>();
+```
+
+### `Context.State` added (mutually exclusive with `Context.Items`)
+
+`ResolutionContext` now exposes a `State` property that follows the same pattern the framework uses to pass state to delegates. `State` and `Items` are **mutually exclusive** per `Map` call — you can pass one or the other, but not both.
+
+<Note>
+`Context.State` is a single strongly-typed object passed through the mapping pipeline. `Context.Items` is a dictionary. Choose the one that fits your use case and do not mix them in the same `Map` call.
+</Note>
+
+### Custom `Equals`/`GetHashCode` no longer called for object identity
+
+<Warning>
+AutoMapper 13 no longer calls custom `Equals` or `GetHashCode` implementations when checking whether a source object has already been mapped. Object identity is now checked exclusively by reference (`object.ReferenceEquals`).
+</Warning>
+
+This change was made to prevent mapping failures caused by broken or unexpected `Equals`/`GetHashCode` implementations. If your application depended on value-based deduplication during mapping, you will need to handle that logic outside of AutoMapper.
+
+### `ProjectTo` runtime polymorphic mapping
+
+Runtime polymorphic mapping with `Include`/`IncludeBase` is no longer exposed through `CreateProjection`. If you need this behavior, use an [extension method](https://github.com/LuckyPennySoftware/AutoMapper/search?l=C%23&q=Advanced) or `CreateMap` directly.
+
+## Migration checklist
+
+<AccordionGroup>
+  <Accordion title="Remove the DI extension package">
+    Delete the `AutoMapper.Extensions.Microsoft.DependencyInjection` package reference from your project file. The `AddAutoMapper` method is now provided by the core package.
+  </Accordion>
+  <Accordion title="Consolidate duplicate CreateMap calls">
+    Search your codebase for multiple `CreateMap` calls using the same type pair. Merge them into a single call or refactor to use mapping inheritance.
+  </Accordion>
+  <Accordion title="Audit Context.Items and Context.State usage">
+    If you pass items through `Map` calls, decide whether to keep using `Context.Items` or migrate to `Context.State`. Do not pass both in the same `Map` call.
+  </Accordion>
+  <Accordion title="Audit custom Equals/GetHashCode on mapped types">
+    If any source types override `Equals` or `GetHashCode` in ways that influence deduplication, move that logic out of AutoMapper and into your application layer.
+  </Accordion>
+</AccordionGroup>

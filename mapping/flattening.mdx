@@ -1,0 +1,199 @@
+---
+title: 'Flattening Complex Objects with AutoMapper'
+description: 'Learn how AutoMapper uses PascalCase conventions to flatten nested object hierarchies into simple DTOs, and how to use IncludeMembers for precise control.'
+keywords: ['flattening', 'PascalCase', 'IncludeMembers', 'naming convention', 'OrderDto']
+---
+
+AutoMapper's most common use case is flattening a complex object graph into a simpler destination type. Rather than requiring manual property-by-property assignment, AutoMapper applies PascalCase naming conventions to automatically match nested source members to flat destination properties — with no extra configuration needed in the typical case.
+
+## How PascalCase flattening works
+
+When AutoMapper cannot directly match a destination property to a source property or method, it splits the destination member name by PascalCase word boundaries and traverses the source object graph to resolve the value.
+
+For example, given these types:
+
+```csharp source types
+public class Order
+{
+    private readonly IList<OrderLineItem> _orderLineItems = new List<OrderLineItem>();
+
+    public Customer Customer { get; set; }
+
+    public OrderLineItem[] GetOrderLineItems()
+    {
+        return _orderLineItems.ToArray();
+    }
+
+    public void AddOrderLineItem(Product product, int quantity)
+    {
+        _orderLineItems.Add(new OrderLineItem(product, quantity));
+    }
+
+    public decimal GetTotal()
+    {
+        return _orderLineItems.Sum(li => li.GetTotal());
+    }
+}
+
+public class Product
+{
+    public decimal Price { get; set; }
+    public string Name { get; set; }
+}
+
+public class OrderLineItem
+{
+    public OrderLineItem(Product product, int quantity)
+    {
+        Product = product;
+        Quantity = quantity;
+    }
+
+    public Product Product { get; private set; }
+    public int Quantity { get; private set; }
+
+    public decimal GetTotal()
+    {
+        return Quantity * Product.Price;
+    }
+}
+
+public class Customer
+{
+    public string Name { get; set; }
+}
+```
+
+You can flatten this into a simple DTO:
+
+```csharp destination type
+public class OrderDto
+{
+    public string CustomerName { get; set; }
+    public decimal Total { get; set; }
+}
+```
+
+AutoMapper resolves the two destination properties automatically:
+
+- `CustomerName` → splits into `Customer` + `Name` → reads `Order.Customer.Name`
+- `Total` → matches `GetTotal()` on `Order` (the `Get` prefix is stripped automatically)
+
+<Steps>
+  <Step title="Configure the map">
+    Register the source and destination type pair. AutoMapper applies PascalCase flattening at this point.
+
+    ```csharp configure
+    var configuration = new MapperConfiguration(
+        cfg => cfg.CreateMap<Order, OrderDto>(),
+        loggerFactory);
+    ```
+  </Step>
+  <Step title="Build source objects">
+    Construct the complex object graph you want to flatten.
+
+    ```csharp build source
+    var customer = new Customer { Name = "George Costanza" };
+    var order = new Order { Customer = customer };
+    var bosco = new Product { Name = "Bosco", Price = 4.99m };
+    order.AddOrderLineItem(bosco, 15);
+    ```
+  </Step>
+  <Step title="Perform the mapping">
+    Call `Map` to produce the flat DTO.
+
+    ```csharp map
+    var mapper = configuration.CreateMapper();
+    OrderDto dto = mapper.Map<Order, OrderDto>(order);
+
+    // dto.CustomerName == "George Costanza"
+    // dto.Total       == 74.85m
+    ```
+  </Step>
+</Steps>
+
+## Disabling flattening
+
+If you need exact property name matching and want to disable automatic PascalCase splitting, set the destination naming convention to `ExactMatchNamingConvention`:
+
+```csharp disable flattening
+cfg.DestinationMemberNamingConvention = new ExactMatchNamingConvention();
+```
+
+With this setting, AutoMapper will only map properties whose names match exactly and will not split destination names by PascalCase conventions.
+
+## IncludeMembers for controlled flattening
+
+`IncludeMembers` gives you explicit control over flattening when you already have a configured map for a child type. This is useful when you want to reuse existing child type maps rather than relying on automatic name splitting.
+
+<Note>
+  `IncludeMembers` requires a separate `CreateMap` call for each child type you include. The order of members in `IncludeMembers` determines match priority — earlier members win over later ones, and the root source object itself always wins first.
+</Note>
+
+```csharp IncludeMembers example
+class Source
+{
+    public string Name { get; set; }
+    public InnerSource InnerSource { get; set; }
+    public OtherInnerSource OtherInnerSource { get; set; }
+}
+
+class InnerSource
+{
+    public string Name { get; set; }
+    public string Description { get; set; }
+}
+
+class OtherInnerSource
+{
+    public string Name { get; set; }
+    public string Description { get; set; }
+    public string Title { get; set; }
+}
+
+class Destination
+{
+    public string Name { get; set; }
+    public string Description { get; set; }
+    public string Title { get; set; }
+}
+```
+
+```csharp configuration and usage
+cfg.CreateMap<Source, Destination>()
+   .IncludeMembers(s => s.InnerSource, s => s.OtherInnerSource);
+cfg.CreateMap<InnerSource, Destination>(MemberList.None);
+cfg.CreateMap<OtherInnerSource, Destination>();
+
+var source = new Source
+{
+    Name = "name",
+    InnerSource = new InnerSource { Description = "description" },
+    OtherInnerSource = new OtherInnerSource { Title = "title" }
+};
+
+var destination = mapper.Map<Destination>(source);
+// destination.Name        == "name"        (from Source itself)
+// destination.Description == "description" (from InnerSource, first match)
+// destination.Title       == "title"       (from OtherInnerSource)
+```
+
+<Tip>
+  `IncludeMembers` integrates with `ReverseMap`. Included members are automatically reversed using `ForPath`, so bidirectional mapping works without additional configuration in most cases.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="How member priority works with IncludeMembers">
+    When resolving a destination member, AutoMapper checks sources in this order:
+
+    1. The root source object itself
+    2. Each included child object in the order specified in `IncludeMembers`
+
+    In the example above, `Name` is taken from `Source` (not `InnerSource`) because the root object is checked first. `Description` comes from `InnerSource` because it appears before `OtherInnerSource` in the `IncludeMembers` call.
+
+    This matching happens at configuration time, not at map time, so runtime types of child objects are not considered.
+  </Accordion>
+  <Accordion title="IncludeMembers vs. classic flattening">
+    Classic PascalCase flattening does not require a map for the child type — AutoMapper navigates the property path by convention. `IncludeMembers`, by contrast, requires an explicit map for each child type but lets you reuse that map's full configuration, including any custom `ForMember` calls defined on the child map.
+  </Accordion>
+</AccordionGroup>

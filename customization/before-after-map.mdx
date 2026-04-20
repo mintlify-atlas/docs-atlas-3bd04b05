@@ -1,0 +1,102 @@
+---
+title: 'Before and After Map Actions in AutoMapper Profiles'
+description: 'Run custom logic before or after a map with BeforeMap, AfterMap, per-call IMappingOperationOptions, or reusable IMappingAction classes that support DI.'
+keywords: ['BeforeMap', 'AfterMap', 'IMappingAction', 'IMappingOperationOptions', 'dependency injection', 'AutoMapper hooks']
+---
+
+Before and after map actions let you run custom logic at the boundaries of a mapping operation — either just before AutoMapper begins assigning destination members, or immediately after it finishes. These hooks are deliberately narrow in scope: if the logic can live outside the mapping operation, that is usually clearer. Reserve before/after actions for cases where the logic genuinely belongs at the mapping boundary.
+
+## Configuring actions on the type map
+
+The most straightforward approach is to attach `BeforeMap` and `AfterMap` callbacks when defining the map:
+
+```csharp type map actions
+var configuration = new MapperConfiguration(cfg => {
+  cfg.CreateMap<Source, Dest>()
+    .BeforeMap((src, dest) => src.Value = src.Value + 10)
+    .AfterMap((src, dest) => dest.Name = "John");
+}, loggerFactory);
+```
+
+`BeforeMap` runs before any member is assigned. `AfterMap` runs after all members have been assigned. Both receive the source and destination objects.
+
+## Per-call actions via IMappingOperationOptions
+
+When the action depends on contextual information available only at map time — such as the current HTTP context or a request-scoped value — pass the callback through the mapping options overload:
+
+```csharp per-call actions
+int i = 10;
+mapper.Map<Source, Dest>(src, opt => {
+    opt.BeforeMap((src, dest) => src.Value = src.Value + i);
+    opt.AfterMap((src, dest) => dest.Name = HttpContext.Current.Identity.Name);
+});
+```
+
+The lambda captures local variables at call time, so you can feed runtime context into the action without storing it on the source object or a shared field.
+
+## Reusable actions with IMappingAction
+
+For actions you want to share across multiple maps or inject services into, implement `IMappingAction<TSource, TDestination>`:
+
+```csharp IMappingAction interface usage
+public class NameMeJohnAction : IMappingAction<SomePersonObject, SomeOtherPersonObject>
+{
+    public void Process(SomePersonObject source, SomeOtherPersonObject destination, ResolutionContext context)
+    {
+        destination.Name = "John";
+    }
+}
+
+var configuration = new MapperConfiguration(cfg => {
+  cfg.CreateMap<SomePersonObject, SomeOtherPersonObject>()
+    .AfterMap<NameMeJohnAction>();
+});
+```
+
+Passing the type via the generic parameter lets AutoMapper resolve the action from the DI container, enabling constructor injection.
+
+## Dependency injection with IMappingAction
+
+You cannot inject dependencies directly into `Profile` classes, but you can inject them into `IMappingAction` implementations. Register the action with DI and attach it to the profile map by type:
+
+```csharp DI mapping action
+public class SetTraceIdentifierAction : IMappingAction<SomeModel, SomeOtherModel>
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public SetTraceIdentifierAction(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
+    }
+
+    public void Process(SomeModel source, SomeOtherModel destination, ResolutionContext context)
+    {
+        destination.TraceIdentifier = _httpContextAccessor.HttpContext.TraceIdentifier;
+    }
+}
+
+public class SomeProfile : Profile
+{
+    public SomeProfile()
+    {
+        CreateMap<SomeModel, SomeOtherModel>()
+            .AfterMap<SetTraceIdentifierAction>();
+    }
+}
+```
+
+Wire everything together in `Startup`:
+
+```csharp startup registration
+public class Startup
+{
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddAutoMapper(_ => { }, typeof(Startup).Assembly);
+    }
+}
+```
+
+<Tip>
+  `IMappingAction` is the preferred pattern when the same post-map logic applies across multiple maps or when the action needs access to scoped services. It keeps the profile clean and makes the action independently testable.
+</Tip>

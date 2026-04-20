@@ -1,0 +1,90 @@
+---
+title: "AutoMapper: Convention-based object mapping for .NET"
+description: "AutoMapper eliminates boilerplate object-to-object mapping code in .NET. Map types automatically by convention, or customize with a fluent API."
+---
+
+AutoMapper is a .NET library that solves the tedious problem of writing code to map one object to another. Instead of hand-writing dozens of property assignments, you declare your mappings once and AutoMapper handles the rest — automatically matching properties by name convention, supporting complex scenarios like flattening, inheritance, and LINQ projection.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install AutoMapper via NuGet and get your first mapping working in minutes.
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/getting-started">
+    Learn how to configure mappings and execute your first Map call.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/profiles">
+    Organize mappings with Profiles, naming conventions, and assembly scanning.
+  </Card>
+  <Card title="Mapping Features" icon="arrows-left-right" href="/mapping/flattening">
+    Flatten objects, map nested types, collections, inheritance, and more.
+  </Card>
+  <Card title="Customization" icon="sliders" href="/customization/custom-value-resolvers">
+    Custom resolvers, type converters, conditions, and value transformers.
+  </Card>
+  <Card title="Queryable Extensions" icon="database" href="/advanced/queryable-extensions">
+    Use ProjectTo for efficient ORM queries without loading entire object graphs.
+  </Card>
+</CardGroup>
+
+## Why AutoMapper?
+
+Mapping code between layers — for example from domain objects to DTOs — is repetitive and error-prone. AutoMapper's convention-based approach means that if your destination type follows naming conventions (e.g., `CustomerName` maps from `Customer.Name`), no explicit configuration is needed.
+
+<CardGroup cols={2}>
+  <Card title="Zero-config for matching names" icon="wand-magic-sparkles">
+    Properties with matching names are mapped automatically — no per-property setup required.
+  </Card>
+  <Card title="Flattening built-in" icon="layer-group">
+    `Customer.Name` on a source maps to `CustomerName` on the destination without configuration.
+  </Card>
+  <Card title="LINQ projection" icon="chart-line">
+    `ProjectTo<T>()` translates maps directly to SQL — only querying what you need.
+  </Card>
+  <Card title="DI-first design" icon="plug">
+    `AddAutoMapper()` integrates natively with ASP.NET Core's dependency injection.
+  </Card>
+</CardGroup>
+
+## Quick example
+
+```csharp getting-started.cs
+// 1. Define your types
+public class Order { public Customer Customer { get; set; } public decimal GetTotal() { ... } }
+public class OrderDto { public string CustomerName { get; set; } public decimal Total { get; set; } }
+
+// 2. Configure AutoMapper (once at startup)
+services.AddAutoMapper(cfg => {
+    cfg.LicenseKey = "<your-license-key>";
+    cfg.CreateMap<Order, OrderDto>();
+});
+
+// 3. Inject and use IMapper
+public class OrdersController {
+    private readonly IMapper _mapper;
+    public OrdersController(IMapper mapper) => _mapper = mapper;
+
+    public OrderDto Get(int id) {
+        var order = repository.GetById(id);
+        return _mapper.Map<OrderDto>(order);
+    }
+}
+```
+
+<Steps>
+  <Step title="Install the NuGet package">
+    Add AutoMapper to your project via the .NET CLI or NuGet Package Manager.
+  </Step>
+  <Step title="Configure your mappings">
+    Call `AddAutoMapper` in your startup code and provide a license key and your `Profile` classes.
+  </Step>
+  <Step title="Inject IMapper">
+    Request `IMapper` via constructor injection in your services and controllers.
+  </Step>
+  <Step title="Map your objects">
+    Call `mapper.Map<TDestination>(source)` to transform objects at runtime.
+  </Step>
+</Steps>
+
+<Note>
+  AutoMapper 15.0+ requires a license key. You can register for a free or commercial license at [automapper.io](https://automapper.io). See [License Configuration](/advanced/license-configuration) for details.
+</Note>

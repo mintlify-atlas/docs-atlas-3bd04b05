@@ -1,0 +1,173 @@
+---
+title: 'Custom Value Resolvers for Destination Members in AutoMapper'
+description: 'Implement IValueResolver to supply computed or context-aware destination member values when AutoMapper convention-based mapping is not sufficient.'
+keywords: ['IValueResolver', 'custom resolver', 'MapFrom', 'IMemberValueResolver', 'ResolutionContext', 'dependency injection']
+---
+
+Custom value resolvers let you supply destination member values through your own logic when AutoMapper's convention-based matching falls short. Rather than cluttering your domain types with mapping-specific calculations, you encapsulate that logic in a dedicated resolver class and wire it up through `ForMember`.
+
+## The IValueResolver interface
+
+Any custom resolver must implement `IValueResolver<TSource, TDestination, TDestMember>`:
+
+```csharp interface
+public interface IValueResolver<in TSource, in TDestination, TDestMember>
+{
+    TDestMember Resolve(TSource source, TDestination destination, TDestMember destMember, ResolutionContext context);
+}
+```
+
+`ResolutionContext` carries contextual information for the current resolution operation — source type, destination type, source value, and any items you pass at map time.
+
+## Basic example
+
+Suppose you need a `Total` destination member that sums two source properties, but cannot or should not express that calculation on the source type itself:
+
+```csharp types
+public class Source
+{
+    public int Value1 { get; set; }
+    public int Value2 { get; set; }
+}
+
+public class Destination
+{
+    public int Total { get; set; }
+}
+```
+
+Define the resolver:
+
+```csharp resolver implementation
+public class CustomResolver : IValueResolver<Source, Destination, int>
+{
+    public int Resolve(Source source, Destination destination, int member, ResolutionContext context)
+    {
+        return source.Value1 + source.Value2;
+    }
+}
+```
+
+## Registering a resolver
+
+AutoMapper offers three ways to attach a resolver to a destination member.
+
+<Steps>
+  <Step title="Generic type argument (recommended)">
+    AutoMapper instantiates the resolver via reflection. This is the most concise form and works well when the resolver has a parameterless constructor.
+
+    ```csharp generic registration
+    var configuration = new MapperConfiguration(cfg =>
+       cfg.CreateMap<Source, Destination>()
+         .ForMember(dest => dest.Total, opt => opt.MapFrom<CustomResolver>()),
+    loggerFactory);
+    configuration.AssertConfigurationIsValid();
+    ```
+  </Step>
+  <Step title="typeof() overload">
+    Pass the type as a `System.Type` value. Useful when the resolver type is determined at runtime.
+
+    ```csharp typeof registration
+    cfg.CreateMap<Source, Destination>()
+        .ForMember(dest => dest.Total, opt => opt.MapFrom(typeof(CustomResolver)));
+    ```
+  </Step>
+  <Step title="Resolver instance">
+    Supply a pre-constructed resolver directly. Use this when the resolver requires constructor arguments or must be created by an IoC container.
+
+    ```csharp instance registration
+    var configuration = new MapperConfiguration(cfg =>
+        cfg.CreateMap<Source, Destination>()
+            .ForMember(dest => dest.Total, opt => opt.MapFrom(new CustomResolver())),
+    loggerFactory);
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The value returned by your resolver is not assigned directly to the destination property. AutoMapper applies any configured map for that member type first, and the result of that mapping becomes the final value. Inspect your execution plan with `BuildExecutionPlan` if the final value is unexpected.
+</Note>
+
+## Reusable resolvers with object source/destination types
+
+If the resolver logic does not depend on specific source or destination types, use `object` as the type arguments so the resolver can be reused across multiple maps:
+
+```csharp object-typed resolver
+public class MultBy2Resolver : IValueResolver<object, object, int>
+{
+    public int Resolve(object source, object dest, int destMember, ResolutionContext context)
+    {
+        return destMember * 2;
+    }
+}
+```
+
+## IMemberValueResolver for source-member-specific resolvers
+
+When you want to redirect which source member is passed into the resolver — and share that resolver across different maps — implement `IMemberValueResolver`:
+
+```csharp IMemberValueResolver
+public class CustomResolver : IMemberValueResolver<object, object, decimal, decimal>
+{
+    public decimal Resolve(object source, object destination, decimal sourceMember, decimal destinationMember, ResolutionContext context)
+    {
+        // logic operating on the specific source member value
+        return sourceMember;
+    }
+}
+
+var configuration = new MapperConfiguration(cfg => {
+    cfg.CreateMap<Source, Destination>()
+        .ForMember(dest => dest.Total,
+            opt => opt.MapFrom<CustomResolver, decimal>(src => src.SubTotal));
+    cfg.CreateMap<OtherSource, OtherDest>()
+        .ForMember(dest => dest.OtherTotal,
+            opt => opt.MapFrom<CustomResolver, decimal>(src => src.OtherSubTotal));
+}, loggerFactory);
+```
+
+This decouples the resolver from any specific source type, making it straightforward to reuse across maps.
+
+## Passing context via Items and State
+
+You can supply extra data to a resolver at map time using `Items` or `State` on the mapping options:
+
+```csharp passing items
+mapper.Map<Source, Dest>(src, opt => opt.Items["Foo"] = "Bar");
+```
+
+Read the value inside the resolver through `ResolutionContext`:
+
+```csharp reading items in resolver
+cfg.CreateMap<Source, Dest>()
+    .ForMember(dest => dest.Foo,
+        opt => opt.MapFrom((src, dest, destMember, context) => context.Items["Foo"]));
+```
+
+<Note>
+  Starting with version 13.0, `context.State` is available as an alternative to `context.Items`. The two are mutually exclusive per `Map` call — use one or the other, not both.
+</Note>
+
+## Resolvers and conditions
+
+<Warning>
+  AutoMapper resolves the destination value **before** evaluating a `Condition`. If your resolver throws when the condition would have prevented the mapping (for example, accessing a property on a null source value), the mapping still fails. Use `PreCondition` instead to skip resolution entirely, or write the resolver defensively.
+</Warning>
+
+The following example demonstrates the problem: `s.Value.Length` throws when `Value` is null, even though the `Condition` would have prevented the mapped value from being assigned:
+
+```csharp problematic resolver-condition combo
+var source = new SourceClass { Value = null };
+
+CreateMap<SourceClass, TargetClass>()
+    .ForMember(d => d.ValueLength, o => o.MapFrom(s => s.Value.Length))
+    .ForAllMembers(o => o.Condition((src, dest, value) => value != null));
+```
+
+Fix this by guarding the resolver expression:
+
+```csharp safe resolver expression
+.ForMember(d => d.ValueLength, o => o.MapFrom(s => s != null ? s.Value.Length : 0))
+```
+
+Or use `PreCondition` to skip resolution before it runs. See [conditional mapping](/customization/conditional-mapping) for details.

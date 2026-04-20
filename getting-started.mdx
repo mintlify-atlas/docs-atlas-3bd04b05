@@ -1,0 +1,131 @@
+---
+title: "Get started with AutoMapper in .NET"
+description: "Configure MapperConfiguration or AddAutoMapper, define CreateMap mappings, and call mapper.Map to transform objects between types in .NET."
+---
+
+AutoMapper maps properties between two types by convention — if the source and destination have a member with the same name, no explicit configuration is needed. This page walks through defining your types, configuring mappings, and calling `mapper.Map` for the first time.
+
+## Define your types
+
+Start with a source type and a destination type. AutoMapper matches members by name automatically, so a property named `CustomerName` on the destination will be populated from `Customer.Name` on the source (flattening). For this example, use a simple `Order` and `OrderDto` pair:
+
+```csharp
+public class Order
+{
+    public string CustomerName { get; set; }
+    public decimal Total { get; set; }
+    public DateTime PlacedAt { get; set; }
+}
+
+public class OrderDto
+{
+    public string CustomerName { get; set; }
+    public decimal Total { get; set; }
+}
+```
+
+## Configure and map
+
+<Steps>
+
+<Step title="Register AutoMapper">
+
+The recommended approach for ASP.NET Core applications is `AddAutoMapper`, which registers `IConfigurationProvider` and `IMapper` with the DI container. Call it in your `Program.cs` or startup class:
+
+```csharp
+// Program.cs
+builder.Services.AddAutoMapper(cfg =>
+{
+    cfg.LicenseKey = "<your-license-key>";
+    cfg.CreateMap<Order, OrderDto>();
+});
+```
+
+`AddAutoMapper` also scans the provided assemblies and automatically registers any `Profile` classes it finds — see [Configuration / Profiles](/configuration/profiles) for how to organize mappings in larger projects.
+
+</Step>
+
+<Step title="Validate your configuration (development only)">
+
+Call `AssertConfigurationIsValid` during startup to catch misconfigured mappings early. This checks that every property on the destination type has a corresponding source member or explicit configuration.
+
+```csharp
+#if DEBUG
+var config = app.Services.GetRequiredService<IConfigurationProvider>();
+config.AssertConfigurationIsValid();
+#endif
+```
+
+Remove this call before releasing to production — it has a measurable startup cost.
+
+</Step>
+
+<Step title="Inject IMapper and map objects">
+
+Request `IMapper` through constructor injection and call `mapper.Map<TDestination>(source)`:
+
+```csharp
+public class OrdersController
+{
+    private readonly IMapper _mapper;
+
+    public OrdersController(IMapper mapper) => _mapper = mapper;
+
+    public OrderDto GetOrder(int id)
+    {
+        Order order = repository.GetById(id);
+        return _mapper.Map<OrderDto>(order);
+    }
+}
+```
+
+</Step>
+
+</Steps>
+
+## Without dependency injection
+
+If you're not using a DI container, construct `MapperConfiguration` directly. The constructor requires an `ILoggerFactory` as its second parameter (required since v15):
+
+```csharp
+using Microsoft.Extensions.Logging;
+
+ILoggerFactory loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.LicenseKey = "<your-license-key>";
+    cfg.CreateMap<Order, OrderDto>();
+}, loggerFactory);
+
+// Validate during development
+config.AssertConfigurationIsValid();
+
+IMapper mapper = config.CreateMapper();
+
+var order = new Order { CustomerName = "Acme Corp", Total = 149.99m };
+OrderDto dto = mapper.Map<OrderDto>(order);
+```
+
+You only need one `MapperConfiguration` instance per `AppDomain`. Create it once at startup and reuse it for the lifetime of the application.
+
+<Tip>
+  `mapper.Map` also has overloads for mapping into an existing destination object (`mapper.Map<TSource, TDestination>(source, destination)`), and non-generic versions when types are only known at runtime.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Profiles" icon="layer-group" href="/configuration/profiles">
+    Group related `CreateMap` calls into Profile classes to keep startup code clean.
+  </Card>
+  <Card title="Dependency injection" icon="plug" href="/configuration/dependency-injection">
+    Learn how AddAutoMapper integrates with ASP.NET Core's service container.
+  </Card>
+  <Card title="Flattening" icon="arrows-left-right" href="/mapping/flattening">
+    Map nested members like Customer.Name to flat properties like CustomerName automatically.
+  </Card>
+  <Card title="Validation" icon="circle-check" href="/configuration/validation">
+    Use AssertConfigurationIsValid and unit test your mappings.
+  </Card>
+</CardGroup>

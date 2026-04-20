@@ -1,0 +1,112 @@
+---
+title: 'Open Generic Type Mapping in AutoMapper'
+description: 'Register one open generic map and AutoMapper resolves all closed variants at runtime. Covers typeof() CreateMap, ConvertUsing expressions, and examples.'
+keywords: ['open generics', 'generic types', 'CreateMap', 'ConvertUsing', 'closed generics', 'type parameters']
+---
+
+AutoMapper supports open generic type maps, allowing you to configure a single map for an open generic type pair that applies to all closed variants of those types at runtime. This eliminates the need to register a separate map for every concrete instantiation of a generic class.
+
+## Registering an open generic map
+
+Because C# does not allow open generic types as type parameters in generic method calls, you must use the `System.Type` overload of `CreateMap` to register open generic maps:
+
+```csharp source and destination generic types
+public class Source<T>
+{
+    public T Value { get; set; }
+}
+
+public class Destination<T>
+{
+    public T Value { get; set; }
+}
+```
+
+```csharp register open generic map
+var configuration = new MapperConfiguration(
+    cfg => cfg.CreateMap(typeof(Source<>), typeof(Destination<>)),
+    loggerFactory);
+```
+
+At runtime, AutoMapper closes the generic types automatically when it encounters a mapping request for a specific instantiation:
+
+```csharp use closed generic types
+var source = new Source<int> { Value = 10 };
+
+var mapper = configuration.CreateMapper();
+var dest = mapper.Map<Source<int>, Destination<int>>(source);
+
+// dest.Value == 10
+```
+
+You do not need a separate `CreateMap<Source<int>, Destination<int>>()` call — the open generic configuration covers all closed variants.
+
+<Note>
+  AutoMapper skips open generic type maps during `AssertConfigurationIsValid()`. Since the open map could theoretically be closed with type arguments that have no valid conversion (e.g., `Source<Foo>` → `Destination<Bar>` where `Foo` cannot map to `Bar`), configuration validation is deferred to runtime.
+</Note>
+
+## When to use open generics
+
+<CardGroup cols={2}>
+  <Card title="Good fit" icon="circle-check">
+    Wrapper or container types where the mapping logic is identical regardless of the type argument — for example, `Result<T>`, `PagedList<T>`, `ApiResponse<T>`, or `Option<T>`.
+  </Card>
+  <Card title="Poor fit" icon="circle-x">
+    Types where the mapping logic differs per type argument. In that case, register separate closed maps for each instantiation so you can configure them independently.
+  </Card>
+</CardGroup>
+
+## Open generic type converters
+
+For cases where the default convention-based mapping is insufficient, you can attach a type converter to the open generic map. The converter class itself can also be open generic:
+
+```csharp open generic type converter (single type argument)
+var configuration = new MapperConfiguration(cfg =>
+    cfg.CreateMap(typeof(Source<>), typeof(Destination<>))
+       .ConvertUsing(typeof(Converter<>)),
+    loggerFactory);
+```
+
+AutoMapper resolves the type argument for `Converter<>` from the closed source type at runtime.
+
+When your converter requires both the source and destination type arguments, use a two-parameter generic converter:
+
+```csharp open generic type converter (two type arguments)
+var configuration = new MapperConfiguration(cfg =>
+    cfg.CreateMap(typeof(Source<>), typeof(Destination<>))
+       .ConvertUsing(typeof(Converter<,>)),
+    loggerFactory);
+```
+
+AutoMapper passes the closed type of `Source` as the first generic argument and the closed type of `Destination` as the second argument when instantiating `Converter<,>`.
+
+<Tip>
+  The same principle applies to open generic value resolvers. Any resolver type used with an open generic map can itself be open generic, and AutoMapper will close it with the appropriate type arguments at runtime.
+</Tip>
+
+## Full example
+
+```csharp complete open generic mapping example
+public class Source<T>
+{
+    public T Value { get; set; }
+}
+
+public class Destination<T>
+{
+    public T Value { get; set; }
+}
+
+// One map covers Source<int>, Source<string>, Source<MyClass>, etc.
+var configuration = new MapperConfiguration(
+    cfg => cfg.CreateMap(typeof(Source<>), typeof(Destination<>)),
+    loggerFactory);
+
+var mapper = configuration.CreateMapper();
+
+var intResult    = mapper.Map<Source<int>,    Destination<int>>(new Source<int> { Value = 42 });
+var stringResult = mapper.Map<Source<string>, Destination<string>>(new Source<string> { Value = "hello" });
+
+// intResult.Value    == 42
+// stringResult.Value == "hello"
+```

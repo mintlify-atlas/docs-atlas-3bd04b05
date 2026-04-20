@@ -1,0 +1,102 @@
+---
+title: 'License Configuration and Key Setup in AutoMapper'
+description: 'Set an AutoMapper license key via AddAutoMapper or MapperConfiguration, understand log-level enforcement, and filter license logs in client apps.'
+keywords: ['license key', 'LicenseKey', 'AddAutoMapper', 'MapperConfiguration', 'license enforcement', 'Blazor WASM', 'log filtering', 'LuckyPennySoftware.AutoMapper.License']
+---
+
+AutoMapper is dual-licensed. The commercial license is configured by supplying a license key at startup. There is no runtime feature degradation, no outbound HTTP calls, and no central license server — enforcement is handled entirely through log messages emitted via `Microsoft.Extensions.Logging`.
+
+## Setting the license key
+
+You can set the license key in whichever integration style your application uses.
+
+<CodeGroup>
+
+```csharp Microsoft.Extensions.DependencyInjection
+services.AddAutoMapper(cfg => {
+    cfg.LicenseKey = "License key here";
+
+    // Other configuration
+});
+```
+
+```csharp MapperConfiguration (no DI)
+var mapperConfiguration = new MapperConfiguration(cfg => {
+  cfg.LicenseKey = "License Key Here";
+}, loggerFactory);
+```
+
+</CodeGroup>
+
+You can obtain a valid license key from [automapper.io](https://automapper.io).
+
+## License enforcement
+
+Licensing is enforced exclusively through log messages. AutoMapper logs to the category `LuckyPennySoftware.AutoMapper.License` using standard `Microsoft.Extensions.Logging` infrastructure:
+
+| Level | Cause |
+|-------|-------|
+| `INFO` | A valid license key was found and accepted |
+| `WARNING` | No license key was supplied |
+| `ERROR` | The license key is invalid or expired |
+
+<Note>
+  A missing or invalid license key does not affect runtime behaviour in any way. No features are disabled, throttled, or degraded. The log messages are the only consequence.
+</Note>
+
+## Multiple license messages
+
+If you see duplicate license log messages at startup, AutoMapper is being registered or configured more than once. The cause and fix depend on which integration style you are using.
+
+<AccordionGroup>
+  <Accordion title="Using AddAutoMapper (Microsoft.Extensions.DependencyInjection)">
+    Calling `AddAutoMapper` multiple times on the same `IServiceCollection` is safe. After the first call registers `IMapper`, subsequent calls are ignored and no additional license validation occurs:
+
+    ```csharp multiple AddAutoMapper calls
+    services.AddAutoMapper(cfg => { cfg.LicenseKey = "key"; });
+    services.AddAutoMapper(cfg => { /* ignored -- IMapper already registered */ });
+    ```
+
+    Even in modular startup code where `AddAutoMapper` is called in multiple places, only a single `MapperConfiguration` singleton is created and only one license log message is emitted.
+  </Accordion>
+  <Accordion title="Using MapperConfiguration directly">
+    Each `MapperConfiguration` instance performs its own license validation independently. Creating multiple instances produces a separate log message per instance:
+
+    ```csharp multiple MapperConfiguration instances
+    // Each of these logs a license message – avoid creating multiple instances
+    var config1 = new MapperConfiguration(cfg => { cfg.LicenseKey = "key"; }, loggerFactory);
+    var config2 = new MapperConfiguration(cfg => { cfg.LicenseKey = "key"; }, loggerFactory);
+    ```
+
+    Create and reuse a single `MapperConfiguration` for the lifetime of your application, registered as a singleton:
+
+    ```csharp singleton MapperConfiguration
+    // Create once and reuse
+    var config = new MapperConfiguration(cfg => { cfg.LicenseKey = "key"; }, loggerFactory);
+    var mapper = new Mapper(config);
+    ```
+  </Accordion>
+  <Accordion title="Suppressing duplicate messages intentionally">
+    When you intentionally maintain multiple configurations — for example in integration tests or isolated module testing — you can silence the duplicate log messages by filtering the log category:
+
+    ```csharp suppress license log category
+    builder.Logging.AddFilter("LuckyPennySoftware.AutoMapper.License", LogLevel.None);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Client redistribution scenarios
+
+When AutoMapper runs on an end-user's device — in a Blazor WebAssembly app, WPF or MAUI desktop app, or any other redistributed client — you should **not** embed the license key. Embedding it would transmit a commercial secret to the client, which is a security risk.
+
+Instead, omit the license key configuration and suppress the resulting warning log:
+
+```csharp client redistribution (Blazor WASM, WPF, MAUI)
+builder.Logging.AddFilter("LuckyPennySoftware.AutoMapper.License", LogLevel.None);
+```
+
+<Warning>
+  Do not set `LicenseKey` in client-side applications. The license key would be included in the compiled output and be recoverable by anyone who inspects the application bundle. Suppress the log category instead.
+</Warning>
+
+The exact call depends on your logging setup. `AddFilter` is available on `ILoggingBuilder`, which is accessible from `WebAssemblyHostBuilder.Logging`, `HostBuilder.ConfigureLogging`, and similar entry points depending on your application host.

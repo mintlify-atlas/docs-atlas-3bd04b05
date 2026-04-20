@@ -1,0 +1,153 @@
+---
+title: 'Controlling Destination Object Construction in AutoMapper'
+description: 'Control how AutoMapper builds destination objects using ConstructUsing, ForCtorParam, DisableConstructorMapping, and DI-aware IDestinationFactory classes.'
+keywords: ['ConstructUsing', 'DisableConstructorMapping', 'ForCtorParam', 'IDestinationFactory', 'constructor mapping', 'dependency injection', 'construction']
+---
+
+AutoMapper can map source values directly into destination constructors, eliminating the need for a parameterless constructor on the destination type. When constructor parameter names match source member names, AutoMapper wires them up automatically. For everything else — parameter name mismatches, custom instantiation logic, or constructor arguments resolved from a DI container — AutoMapper provides explicit construction APIs.
+
+## Automatic constructor mapping
+
+If a destination type has a constructor whose parameter names match source member names (case-insensitive), AutoMapper resolves constructor arguments alongside property mapping with no extra configuration:
+
+```csharp automatic constructor matching
+public class Source {
+    public int Value { get; set; }
+}
+
+public class SourceDto {
+    public SourceDto(int value) {
+        _value = value;
+    }
+    private int _value;
+    public int Value {
+        get { return _value; }
+    }
+}
+
+var configuration = new MapperConfiguration(cfg => cfg.CreateMap<Source, SourceDto>(), loggerFactory);
+```
+
+AutoMapper matches `value` (the constructor parameter) to `Value` (the source member) by name and passes it through during construction.
+
+## Mapping mismatched constructor parameter names
+
+When the destination constructor uses a different parameter name than the source member, use `ForCtorParam` to provide the mapping explicitly:
+
+```csharp ForCtorParam for name mismatch
+public class Source {
+    public int Value { get; set; }
+}
+
+public class SourceDto {
+    public SourceDto(int valueParamSomeOtherName) {
+        _value = valueParamSomeOtherName;
+    }
+    private int _value;
+    public int Value {
+        get { return _value; }
+    }
+}
+
+var configuration = new MapperConfiguration(cfg =>
+  cfg.CreateMap<Source, SourceDto>()
+    .ForCtorParam("valueParamSomeOtherName", opt => opt.MapFrom(src => src.Value))
+, loggerFactory);
+```
+
+`ForCtorParam` works for both in-memory mapping and LINQ projections.
+
+## Disabling constructor mapping
+
+To prevent AutoMapper from using constructors entirely — for example, when the destination type has a parameterless constructor you want to use exclusively — disable constructor mapping globally:
+
+```csharp disable constructor mapping
+var configuration = new MapperConfiguration(cfg => cfg.DisableConstructorMapping(), loggerFactory);
+```
+
+You can also restrict which constructors AutoMapper considers. The following example limits AutoMapper to public constructors only, which is the recommended setting when mapping to record types:
+
+```csharp only public constructors
+// use only public constructors
+var configuration = new MapperConfiguration(cfg => cfg.ShouldUseConstructor = constructor => constructor.IsPublic, loggerFactory);
+```
+
+<Note>
+  When mapping to records, consider restricting to public constructors. Records expose their primary constructor as public, and restricting to public-only prevents AutoMapper from inadvertently selecting a compiler-generated copy constructor.
+</Note>
+
+## Class-based destination factories
+
+For reusable or complex construction logic, implement `IDestinationFactory<TSource, TDestination>` instead of writing an inline `ConstructUsing` lambda. This is different from `ConvertUsing`, which replaces the entire mapping operation — a destination factory only controls object construction; property mapping continues normally afterward.
+
+### The interface
+
+```csharp IDestinationFactory interface
+public interface IDestinationFactory<in TSource, out TDestination>
+{
+    TDestination Construct(TSource source, ResolutionContext context);
+}
+```
+
+### Basic usage
+
+```csharp custom factory class
+public class CustomConstructor : IDestinationFactory<Source, Destination>
+{
+    public Destination Construct(Source source, ResolutionContext context)
+    {
+        // Custom instantiation logic
+        return new Destination { InitialValue = source.Value * 2 };
+    }
+}
+
+cfg.CreateMap<Source, Destination>()
+    .ConstructUsing<CustomConstructor>();
+```
+
+### Dependency injection
+
+AutoMapper resolves destination factories from the DI container, enabling constructor injection of services into the factory:
+
+```csharp DI-aware factory
+public class DIAwareConstructor : IDestinationFactory<Source, Destination>
+{
+    private readonly IMyService _service;
+
+    public DIAwareConstructor(IMyService service)
+    {
+        _service = service;
+    }
+
+    public Destination Construct(Source source, ResolutionContext context)
+    {
+        return new Destination
+        {
+            InitialValue = _service.CalculateValue(source.Value)
+        };
+    }
+}
+
+// Registration
+services.AddScoped<IMyService, MyService>();
+services.AddAutoMapper(cfg =>
+{
+    cfg.CreateMap<Source, Destination>()
+        .ConstructUsing<DIAwareConstructor>();
+}, typeof(IMyService).Assembly);
+```
+
+The factory is resolved from the scoped container on each `Map` call, so it can safely hold scoped service dependencies.
+
+### Runtime type resolution
+
+When the source or destination type is not known at compile time, use the non-generic overload:
+
+```csharp non-generic factory registration
+cfg.CreateMap(typeof(Source), typeof(Destination))
+    .ConstructUsing(typeof(CustomConstructor));
+```
+
+<Tip>
+  Prefer `IDestinationFactory` over inline `ConstructUsing` lambdas when the same construction logic is needed across multiple maps or when the factory depends on injected services. Lambdas are convenient for one-off cases or simple expressions.
+</Tip>

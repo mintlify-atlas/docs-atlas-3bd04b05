@@ -1,0 +1,39 @@
+---
+title: 'Null Substitution for AutoMapper Source Member Fallbacks'
+description: 'Use NullSubstitute on a ForMember to supply a fallback value when the source member is null, with full support for ProjectTo queryable projections.'
+keywords: ['NullSubstitute', 'null substitution', 'null fallback', 'ForMember', 'ProjectTo', 'AutoMapper']
+---
+
+Null substitution lets you specify a fallback value for a destination member when the source value is null anywhere along the member chain. Instead of mapping from null — which typically results in a null destination member — AutoMapper maps from the substitute value you supply.
+
+## Basic usage
+
+Configure null substitution per member using `ForMember` and `NullSubstitute`:
+
+```csharp null substitution
+var config = new MapperConfiguration(cfg => cfg.CreateMap<Source, Dest>()
+    .ForMember(destination => destination.Value, opt => opt.NullSubstitute("Other Value")),
+loggerFactory);
+
+var source = new Source { Value = null };
+var mapper = config.CreateMapper();
+var dest = mapper.Map<Source, Dest>(source);
+
+dest.Value.ShouldEqual("Other Value");
+
+source.Value = "Not null";
+
+dest = mapper.Map<Source, Dest>(source);
+
+dest.Value.ShouldEqual("Not null");
+```
+
+When `source.Value` is null, the destination receives `"Other Value"`. When `source.Value` has a real value, that value is used as normal.
+
+## How the substitute is processed
+
+The substitute value is treated as a value of the source member type, not the destination member type. AutoMapper runs any configured mapping or conversion for that member type after applying the substitution. This means the substitute goes through the same type conversion pipeline as a real source value would.
+
+<Note>
+  Null substitution works with `ProjectTo` for queryable projections, unlike some other member-level customizations. This makes it safe to use in LINQ-to-database scenarios where you need a default value when a nullable column is null.
+</Note>

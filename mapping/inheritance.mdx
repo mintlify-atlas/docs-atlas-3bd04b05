@@ -1,0 +1,166 @@
+---
+title: 'Inheritance Mapping and Runtime Polymorphism in AutoMapper'
+description: 'Inherit AutoMapper config across class hierarchies with Include and IncludeBase. Enable polymorphic mapping so derived types resolve to the right destination.'
+keywords: ['inheritance', 'Include', 'IncludeBase', 'IncludeAllDerived', 'polymorphism', 'As', 'derived types']
+---
+
+AutoMapper's inheritance mapping serves two distinct purposes: propagating mapping configuration from a base type map down to derived type maps, and selecting the correct derived destination type at runtime when the source object's runtime type is more specific than the declared type. Both features are opt-in and require explicit configuration.
+
+## Inheriting configuration from a base map
+
+When a derived type shares mapping rules with its base type, you can configure the base map once and inherit that configuration in derived maps. There are two equivalent ways to express this relationship.
+
+### Option 1: Declare includes from the base map
+
+Call `Include` on the base map to register each derived pair:
+
+```csharp Include from base map
+cfg.CreateMap<BaseEntity, BaseDto>()
+   .Include<DerivedEntity, DerivedDto>()
+   .ForMember(dest => dest.SomeMember, opt => opt.MapFrom(src => src.OtherMember));
+
+cfg.CreateMap<DerivedEntity, DerivedDto>();
+```
+
+### Option 2: Declare the base from the derived map
+
+Call `IncludeBase` on the derived map to point back to the base:
+
+```csharp IncludeBase from derived map
+cfg.CreateMap<BaseEntity, BaseDto>()
+   .ForMember(dest => dest.SomeMember, opt => opt.MapFrom(src => src.OtherMember));
+
+cfg.CreateMap<DerivedEntity, DerivedDto>()
+   .IncludeBase<BaseEntity, BaseDto>();
+```
+
+In both cases, `DerivedEntity` → `DerivedDto` inherits the `ForMember` configuration defined on the base map. `Include` and `IncludeBase` apply recursively, so you only need to declare the closest level in the hierarchy.
+
+### IncludeAllDerived
+
+If a base class has many derived classes, `IncludeAllDerived` configures inheritance for all of them in a single call:
+
+```csharp IncludeAllDerived
+cfg.CreateMap<BaseEntity, BaseDto>()
+   .IncludeAllDerived();
+
+cfg.CreateMap<DerivedEntity, DerivedDto>();
+```
+
+<Warning>
+  `IncludeAllDerived` searches all registered maps to find derived types, which is slower than explicitly listing them with `Include`. Prefer explicit `Include` calls in performance-sensitive applications or large mapping configurations.
+</Warning>
+
+## Runtime polymorphic mapping
+
+When a source object's runtime type is a subclass of the declared source type, AutoMapper can automatically select the most specific registered destination type. You must register the derived type pairs with `Include` and provide their own `CreateMap` calls.
+
+```csharp polymorphic domain and DTO types
+public class Order { }
+public class OnlineOrder : Order { }
+public class MailOrder : Order { }
+
+public class OrderDto { }
+public class OnlineOrderDto : OrderDto { }
+public class MailOrderDto : OrderDto { }
+```
+
+```csharp configuration for polymorphic mapping
+var configuration = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<Order, OrderDto>()
+        .Include<OnlineOrder, OnlineOrderDto>()
+        .Include<MailOrder, MailOrderDto>();
+    cfg.CreateMap<OnlineOrder, OnlineOrderDto>();
+    cfg.CreateMap<MailOrder, MailOrderDto>();
+}, loggerFactory);
+```
+
+```csharp runtime polymorphic mapping
+var order = new OnlineOrder();
+var mapped = mapper.Map(order, order.GetType(), typeof(OrderDto));
+
+// mapped is OnlineOrderDto, not OrderDto
+Assert.IsType<OnlineOrderDto>(mapped);
+```
+
+AutoMapper detects that the source is an `OnlineOrder` at runtime and uses the more specific `OnlineOrder` → `OnlineOrderDto` map automatically.
+
+## Specifying inheritance from derived classes
+
+You can also express the inheritance relationship from the derived side using `IncludeBase`:
+
+```csharp IncludeBase on derived maps
+var configuration = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<Order, OrderDto>()
+       .ForMember(o => o.Id, m => m.MapFrom(s => s.OrderId));
+
+    cfg.CreateMap<OnlineOrder, OnlineOrderDto>()
+       .IncludeBase<Order, OrderDto>();
+
+    cfg.CreateMap<MailOrder, MailOrderDto>()
+       .IncludeBase<Order, OrderDto>();
+}, loggerFactory);
+```
+
+## The As shortcut
+
+For simple cases where all instances of a base type should be mapped to a specific derived destination type, use `As`:
+
+```csharp As shortcut
+cfg.CreateMap<Order, OnlineOrderDto>();
+cfg.CreateMap<Order, OrderDto>().As<OnlineOrderDto>();
+
+// Every Order mapped to OrderDto is actually produced as an OnlineOrderDto
+mapper.Map<OrderDto>(new Order()).ShouldBeOfType<OnlineOrderDto>();
+```
+
+## Inheritance mapping priorities
+
+When multiple configuration sources apply to the same destination member, AutoMapper resolves them in this priority order:
+
+1. **Explicit mapping** — `ForMember` with `MapFrom` on the current map
+2. **Inherited explicit mapping** — `ForMember` with `MapFrom` inherited from a base map
+3. **Ignore** — `ForMember` with `Ignore` on the current or inherited map
+4. **Convention mapping** — properties matched by name convention
+
+This means an `Ignore` from a base map overrides convention mapping on a derived map. Consider this scenario:
+
+```csharp inheritance priority example
+public class Order { }
+public class OnlineOrder : Order
+{
+    public string Referrer { get; set; }
+}
+public class MailOrder : Order { }
+
+public class OrderDto
+{
+    public string Referrer { get; set; }
+}
+
+var configuration = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<Order, OrderDto>()
+       .Include<OnlineOrder, OrderDto>()
+       .Include<MailOrder, OrderDto>()
+       .ForMember(o => o.Referrer, m => m.Ignore());
+
+    cfg.CreateMap<OnlineOrder, OrderDto>();
+    cfg.CreateMap<MailOrder, OrderDto>();
+}, loggerFactory);
+
+var order = new OnlineOrder { Referrer = "google" };
+var mapped = mapper.Map(order, order.GetType(), typeof(OrderDto));
+
+// mapped.Referrer is null — Ignore from the base map wins over convention
+Assert.IsNull(mapped.Referrer);
+```
+
+To override the inherited `Ignore` and map `Referrer` for `OnlineOrder`, add an explicit `MapFrom` on the derived map:
+
+```csharp override inherited Ignore
+cfg.CreateMap<OnlineOrder, OrderDto>()
+   .ForMember(o => o.Referrer, m => m.MapFrom(x => x.Referrer));
+```

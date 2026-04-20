@@ -1,0 +1,152 @@
+---
+title: 'Profiles: Organizing AutoMapper Configuration'
+description: 'Learn how to use AutoMapper Profiles to group related mappings, scan assemblies, control compilation, and tune execution plan depth.'
+keywords: ['automapper', 'profile', 'CreateMap', 'AddMaps', 'CompileMappings', 'MaxExecutionPlanDepth']
+---
+
+Profiles are the primary way to organize AutoMapper configuration. Instead of registering every map in a single `MapperConfiguration` lambda, you group related source-to-destination mappings inside a class that inherits from `Profile`. Each profile is self-contained: naming conventions, null-value settings, and other configuration applied inside a profile affect only the maps declared in that profile.
+
+## Creating a profile
+
+Inherit from `Profile` and place your `CreateMap` calls in the constructor. AutoMapper uses the constructor—not an override method—as of version 5.
+
+```csharp OrganizationProfile.cs
+public class OrganizationProfile : Profile
+{
+    public OrganizationProfile()
+    {
+        CreateMap<Foo, FooDto>();
+        // Additional CreateMap calls go here.
+        // Profile-level settings (naming conventions, etc.) also go here.
+    }
+}
+```
+
+<Note>
+Configuration inside a profile only applies to maps declared in that profile. Configuration set on the root `MapperConfiguration` applies to **all** maps across every profile.
+</Note>
+
+## Registering profiles
+
+AutoMapper gives you three ways to register profiles with `MapperConfiguration`.
+
+### Explicit registration
+
+Pass the profile type as a generic argument, or provide an instance directly:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddProfile<OrganizationProfile>();
+    cfg.AddProfile(new OrganizationProfile());
+}, loggerFactory);
+```
+
+### Assembly scanning
+
+`AddMaps` scans one or more assemblies and automatically registers every class that inherits from `Profile`. Pass assembly instances, assembly names, or marker types:
+
+<CodeGroup>
+
+```csharp By assembly instance
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddMaps(myAssembly);
+}, loggerFactory);
+```
+
+```csharp By assembly name
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddMaps(new[] { "Foo.UI", "Foo.Core" });
+}, loggerFactory);
+```
+
+```csharp By marker type
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddMaps(new[]
+    {
+        typeof(HomeController),
+        typeof(Entity)
+    });
+}, loggerFactory);
+```
+
+</CodeGroup>
+
+<Tip>
+`AddMaps` also discovers attribute-based mappings declared with `[AutoMap]` in the same scan pass.
+</Tip>
+
+## Compilation behavior
+
+AutoMapper lazily compiles each type map's execution plan the first time that pair is mapped. This spreads start-up cost across the application's lifetime, but it means the first call for any given type pair incurs a compilation hit.
+
+To compile all mappings up front—for example, in a background initialization step—call `CompileMappings()`:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.AddMaps(myAssembly);
+}, loggerFactory);
+
+// Compile all execution plans now instead of on first use.
+config.CompileMappings();
+```
+
+<Warning>
+For hundreds of type maps this may take a couple of seconds. If compilation is significantly longer, your execution plans are large—see the performance guidance below.
+</Warning>
+
+## Tuning execution plan depth
+
+Execution plan size grows with the number of properties and the complexity of nested objects. Large plans slow compilation and can increase memory pressure. Two knobs let you reduce plan size without changing your model:
+
+<AccordionGroup>
+  <Accordion title="MapAtRuntime per member">
+    Annotating a member with `[MapAtRuntime]` (or calling `.MapAtRuntime()` in fluent config) replaces the inlined execution plan for that member with a runtime method call. Compilation is faster, but that member is resolved at runtime rather than at compile time.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [MapAtRuntime]
+        public AddressDto ShippingAddress { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="MaxExecutionPlanDepth globally">
+    `MaxExecutionPlanDepth` (default `1`) controls how many levels of child objects are inlined into the parent execution plan. Setting it to `0` forces all child-object mapping through method calls, which is the most aggressive reduction.
+
+    ```csharp
+    var config = new MapperConfiguration(cfg =>
+    {
+        cfg.MaxExecutionPlanDepth = 0;
+        cfg.AddMaps(myAssembly);
+    }, loggerFactory);
+    ```
+
+    Lowering this value reduces compilation time but may slow mapping throughput—measure with a profiler before tuning in production.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+Avoiding `PreserveReferences` and `MaxDepth` on your maps also keeps execution plans smaller.
+</Note>
+
+## Circular and self-referential types
+
+When AutoMapper detects a self-referential type map (for example, `CreateMap<Node, Node>()` where `Node` has a `Node` property), it automatically enables `PreserveReferences` and applies a default `MaxDepth` of **64**—matching the defaults of System.Text.Json and Newtonsoft.Json—to prevent denial-of-service conditions from deeply nested graphs.
+
+If your object graphs legitimately exceed 64 levels, raise the limit explicitly:
+
+```csharp
+cfg.CreateMap<Node, Node>().MaxDepth(128);
+```
+
+To disable the depth limit entirely and rely only on object-identity caching:
+
+```csharp
+cfg.CreateMap<Node, Node>().PreserveReferences();
+```

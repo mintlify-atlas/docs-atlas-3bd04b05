@@ -1,0 +1,129 @@
+---
+title: 'Custom Type Converters for Global AutoMapper Conversions'
+description: 'Use ITypeConverter to define reusable, globally scoped conversions between incompatible types like string to int, DateTime, or a custom domain type.'
+keywords: ['ITypeConverter', 'ConvertUsing', 'type conversion', 'string to int', 'global converter', 'AutoMapper']
+---
+
+Custom type converters give you complete control over how AutoMapper converts one type to another across your entire mapping configuration. Unlike value resolvers, which are configured per destination member, a type converter applies globally — once registered, AutoMapper uses it automatically whenever it encounters that source/destination type pair in any map.
+
+## When to use a type converter
+
+Type converters are the right tool when the source and destination types look nothing alike, or when a standard conversion already exists that you want to wire into AutoMapper. A common scenario is mapping `string` properties to stronger types like `int`, `DateTime`, or a reflection-based type:
+
+```csharp source and destination
+public class Source
+{
+    public string Value1 { get; set; }
+    public string Value2 { get; set; }
+    public string Value3 { get; set; }
+}
+
+public class Destination
+{
+    public int Value1 { get; set; }
+    public DateTime Value2 { get; set; }
+    public Type Value3 { get; set; }
+}
+```
+
+Without a converter, AutoMapper throws at configuration-check time because it has no knowledge of how to convert `string` to `int`, `DateTime`, or `Type`.
+
+## The ITypeConverter interface
+
+```csharp interface
+public interface ITypeConverter<in TSource, TDestination>
+{
+    TDestination Convert(TSource source, TDestination destination, ResolutionContext context);
+}
+```
+
+Implement this interface to encapsulate conversion logic for a specific type pair.
+
+## Three ways to register a type converter
+
+```csharp ConvertUsing overloads
+void ConvertUsing(Func<TSource, TDestination> mappingFunction);
+void ConvertUsing(ITypeConverter<TSource, TDestination> converter);
+void ConvertUsing<TTypeConverter>() where TTypeConverter : ITypeConverter<TSource, TDestination>;
+```
+
+<AccordionGroup>
+  <Accordion title="Func overload — simple inline conversion">
+    Use a lambda or method group for straightforward cases. `Convert.ToInt32` as a method group is the most concise form for primitive conversions.
+
+    ```csharp func overload
+    cfg.CreateMap<string, int>().ConvertUsing(s => Convert.ToInt32(s));
+    ```
+  </Accordion>
+  <Accordion title="Instance overload — supply a constructed converter">
+    Pass a pre-constructed converter when it needs constructor arguments or must be created by an IoC container.
+
+    ```csharp instance overload
+    cfg.CreateMap<string, DateTime>().ConvertUsing(new DateTimeTypeConverter());
+    ```
+  </Accordion>
+  <Accordion title="Generic type argument — let AutoMapper instantiate it">
+    AutoMapper resolves the converter type at runtime via reflection or the configured service locator.
+
+    ```csharp generic overload
+    cfg.CreateMap<string, Type>().ConvertUsing<TypeTypeConverter>();
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Full working example
+
+```csharp full example
+[Test]
+public void Example()
+{
+    var configuration = new MapperConfiguration(cfg => {
+      cfg.CreateMap<string, int>().ConvertUsing(s => Convert.ToInt32(s));
+      cfg.CreateMap<string, DateTime>().ConvertUsing(new DateTimeTypeConverter());
+      cfg.CreateMap<string, Type>().ConvertUsing<TypeTypeConverter>();
+      cfg.CreateMap<Source, Destination>();
+    }, loggerFactory);
+    configuration.AssertConfigurationIsValid();
+
+    var source = new Source
+    {
+        Value1 = "5",
+        Value2 = "01/01/2000",
+        Value3 = "AutoMapperSamples.GlobalTypeConverters.GlobalTypeConverters+Destination"
+    };
+
+    Destination result = mapper.Map<Source, Destination>(source);
+    result.Value3.ShouldEqual(typeof(Destination));
+}
+
+public class DateTimeTypeConverter : ITypeConverter<string, DateTime>
+{
+    public DateTime Convert(string source, DateTime destination, ResolutionContext context)
+    {
+        return System.Convert.ToDateTime(source);
+    }
+}
+
+public class TypeTypeConverter : ITypeConverter<string, Type>
+{
+    public Type Convert(string source, Type destination, ResolutionContext context)
+    {
+        return Assembly.GetExecutingAssembly().GetType(source);
+    }
+}
+```
+
+## Global scope vs. per-member resolvers
+
+<CardGroup cols={2}>
+  <Card title="Custom type converters" icon="globe">
+    Registered once, applied automatically everywhere AutoMapper encounters that source/destination type pair — across all maps in the configuration. You never have to repeat the `string → int` converter after registering it.
+  </Card>
+  <Card title="Custom value resolvers" icon="sliders">
+    Configured at the individual member level via `ForMember`. They are tightly scoped to one destination property on one map and are the right tool when the logic depends on the broader source or destination object. See [custom value resolvers](/customization/custom-value-resolvers).
+  </Card>
+</CardGroup>
+
+<Tip>
+  Build a library of type converters for common cross-cutting conversions — string parsing, enum coercion, culture-specific formatting — and register them in a shared profile. All downstream maps automatically benefit without any extra configuration.
+</Tip>

@@ -1,0 +1,111 @@
+---
+title: 'Configuration Validation with AssertConfigurationIsValid'
+description: 'Use AssertConfigurationIsValid to catch unmapped destination members, misconfigured type maps, and typos at startup before they cause runtime failures.'
+keywords: ['automapper', 'AssertConfigurationIsValid', 'configuration validation', 'MemberList', 'AutoMapperConfigurationException']
+---
+
+One of AutoMapper's goals is to make mapping testable without hand-rolling assertions for every property. `AssertConfigurationIsValid` performs a dry run over all configured type maps and throws `AutoMapperConfigurationException` with a descriptive message for any problem it finds. Run it in development and in your test suite—not in production—so that misconfigured maps fail immediately rather than at the point of first use.
+
+## Basic usage
+
+Create your `MapperConfiguration`, then call `AssertConfigurationIsValid` immediately after:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+    cfg.CreateMap<Source, Destination>(), loggerFactory);
+
+config.AssertConfigurationIsValid();
+```
+
+AutoMapper checks that every destination member has a corresponding source member. If a destination property is unmapped—for example, because of a typo—the call throws:
+
+```csharp
+public class Source
+{
+    public int SomeValue { get; set; }
+}
+
+public class Destination
+{
+    public int SomeValuefff { get; set; }  // typo: will fail validation
+}
+```
+
+Calling `AssertConfigurationIsValid` on a configuration that maps `Source` to `Destination` above will throw `AutoMapperConfigurationException` listing `SomeValuefff` as unmapped.
+
+<Tip>
+Call `AssertConfigurationIsValid` in a unit test or in `Program.cs` during application startup (behind an environment guard) so typos and renames in source types are caught in CI rather than in production.
+</Tip>
+
+## Fixing validation errors
+
+When a destination member cannot or should not be mapped from the source, you have three options:
+
+<Steps>
+  <Step title="Use a custom value resolver">
+    Provide a class implementing `IValueResolver` to supply the value programmatically. AutoMapper counts a resolver as satisfying the member's mapping requirement.
+  </Step>
+  <Step title="Use projection">
+    Supply the value via a `MapFrom` expression that transforms or derives the destination value from the source.
+  </Step>
+  <Step title="Explicitly ignore the member">
+    Mark the member with `Ignore()` to tell AutoMapper—and validation—that the member will be filled by other means:
+
+    ```csharp
+    var config = new MapperConfiguration(cfg =>
+        cfg.CreateMap<Source, Destination>()
+           .ForMember(dest => dest.SomeValuefff, opt => opt.Ignore()),
+        loggerFactory);
+    ```
+  </Step>
+</Steps>
+
+## Choosing which member list to validate
+
+By default, AutoMapper validates against the **destination** member list—every destination property must be mapped. You can change this per type map using the `MemberList` enum:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    // Validate that every SOURCE member is mapped (not destination).
+    cfg.CreateMap<Source, Destination>(MemberList.Source);
+
+    // Skip validation entirely for this map.
+    cfg.CreateMap<Source2, Destination2>(MemberList.None);
+}, loggerFactory);
+```
+
+| Value | Behavior |
+|---|---|
+| `MemberList.Destination` | Every destination member must have a mapping (default). |
+| `MemberList.Source` | Every source member must be consumed by a mapping. |
+| `MemberList.None` | No member-level validation. This is the default for `ReverseMap`. |
+
+## Validating a single type map or profile
+
+`IConfigurationProvider` exposes overloads for targeted validation when you do not want to revalidate the entire configuration:
+
+```csharp
+// Validate a single type map.
+configuration.Internal().AssertConfigurationIsValid(typeMap);
+
+// Validate all maps belonging to a specific profile by name.
+configuration.Internal().AssertConfigurationIsValid("OrganizationProfile");
+
+// Validate all maps belonging to a profile by type.
+configuration.Internal().AssertConfigurationIsValid<OrganizationProfile>();
+```
+
+## Circular types and MaxDepth safety
+
+For self-referential type maps, AutoMapper automatically enables `PreserveReferences` and applies a default `MaxDepth` of **64** to prevent runaway recursion—matching the defaults of System.Text.Json and Newtonsoft.Json. Validation respects these guards, so deeply nested object graphs do not cause the validator itself to loop.
+
+If your graphs legitimately exceed 64 levels, set an explicit higher limit:
+
+```csharp
+cfg.CreateMap<Node, Node>().MaxDepth(128);
+```
+
+<Note>
+Custom validation logic can be added through extension points. See the `CustomValidations.cs` unit tests in the AutoMapper repository for examples of implementing your own configuration validators.
+</Note>

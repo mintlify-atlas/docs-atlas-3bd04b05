@@ -1,0 +1,96 @@
+---
+title: 'Upgrading AutoMapper to version 12'
+description: 'AutoMapper 12 enforces single configuration per map and member, removes ResolutionContext.Options, and simplifies naming conventions.'
+keywords: ['automapper', 'v12', 'upgrade', 'migration', 'ResolutionContext', 'breaking changes']
+---
+
+AutoMapper 12 tightens configuration rules that were previously unenforced, removes the `ResolutionContext.Options` property, and simplifies the naming convention implementation. Review each section carefully — some of these changes surface as runtime errors rather than compile-time errors.
+
+## Breaking changes
+
+### Equivalent settings overwrite each other
+
+<Warning>
+In AutoMapper 12, each map and each member may have only one active setting of each type. Configuring the same setting twice silently overwrites the first configuration rather than merging. This applies both at the map level and the member level.
+</Warning>
+
+The following scenarios are affected:
+
+- **Type converters per map.** Only one type converter is allowed per `source → destination` map. A second `ConvertUsing` call on the same map will overwrite the first.
+- **Resolvers per member.** A value converter is a specialised resolver, so calling `ConvertUsing` on a member after `MapFrom` will overwrite the `MapFrom` configuration for that member.
+- **Separate `Map` and `ProjectTo` configuration.** You cannot have distinct configurations for in-memory mapping and LINQ projections on the same map or member.
+- **`ForAllMaps` / `ForAllPropertyMaps` interactions.** Global configuration applied via `ForAllMaps` or `ForAllPropertyMaps` can overwrite settings already established in a specific map profile.
+
+Audit your profile configuration for any of these patterns and consolidate to a single setting per map or member.
+
+### `ResolutionContext.Options` removed
+
+<Warning>
+The `ResolutionContext.Options` property has been removed. Any code that accesses `context.Options` will fail to compile after upgrading to version 12.
+</Warning>
+
+Use `ResolutionContext.Items` to access the values you previously passed through the `Map` call:
+
+<CodeGroup>
+
+```csharp Before
+// Accessing options in a value resolver
+public Dest Resolve(Source source, Dest dest, ResolutionContext context)
+{
+    var value = context.Options.Items["myKey"];
+    // ...
+}
+```
+
+```csharp After
+// Accessing items in a value resolver
+public Dest Resolve(Source source, Dest dest, ResolutionContext context)
+{
+    var value = context.Items["myKey"];
+    // ...
+}
+```
+
+</CodeGroup>
+
+Starting with **version 12.0.1**, you can use `TryGetItems` to safely check whether any items were passed in the `Map` call before accessing them:
+
+```csharp
+public Dest Resolve(Source source, Dest dest, ResolutionContext context)
+{
+    if (context.TryGetItems(out var items) && items.TryGetValue("myKey", out var value))
+    {
+        // use value
+    }
+    // ...
+}
+```
+
+<Note>
+If you previously used `ServiceCtor` to inject services into type converters or value resolvers, replace that approach with standard dependency injection or pass the required objects explicitly through the `Map` call using `Context.Items`.
+</Note>
+
+### Naming conventions simplified
+
+The naming convention implementation has been rewritten for performance. The new implementation covers the common cases but does not handle every edge case that the previous implementation did.
+
+<Note>
+If the built-in naming conventions no longer match your member naming patterns after upgrading, you can implement a custom naming convention by implementing the `INamingConvention` interface.
+</Note>
+
+## Migration checklist
+
+<Steps>
+  <Step title="Audit for duplicate settings">
+    Search your profiles for multiple `ConvertUsing`, `MapFrom`, `ForAllMaps`, or `ForAllPropertyMaps` calls that target the same map or member. Ensure only one setting of each type is active.
+  </Step>
+  <Step title="Replace ResolutionContext.Options">
+    Find all references to `context.Options` and replace them with `context.Items`. If you are not sure whether a context will always be provided, use `context.TryGetItems` (available from 12.0.1).
+  </Step>
+  <Step title="Remove ServiceCtor usage">
+    Replace any `ServiceCtor` configuration with constructor injection or explicit parameter passing via `Context.Items`.
+  </Step>
+  <Step title="Verify naming conventions">
+    Run your configuration validation (`AssertConfigurationIsValid`) and check that all expected member mappings are still resolved correctly after the naming convention changes.
+  </Step>
+</Steps>

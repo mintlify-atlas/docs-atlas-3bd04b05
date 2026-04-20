@@ -1,0 +1,157 @@
+---
+title: 'Mapping Lists, Arrays, and Collections with AutoMapper'
+description: 'AutoMapper maps collections element-by-element. Learn how to map List, IEnumerable, arrays, handle null collections, and polymorphic element types.'
+keywords: ['lists', 'arrays', 'IEnumerable', 'IList', 'collections', 'AllowNullCollections', 'polymorphic']
+---
+
+AutoMapper handles collection mapping without requiring you to register a separate map for each collection type. You only need to configure the element type pair once — AutoMapper applies that map to every element in the source collection and produces the destination collection in whatever generic type you request.
+
+## Basic collection mapping
+
+Define element types and their map:
+
+```csharp source and destination element types
+public class Source
+{
+    public int Value { get; set; }
+}
+
+public class Destination
+{
+    public int Value { get; set; }
+}
+```
+
+Register only the element map:
+
+```csharp configuration
+var configuration = new MapperConfiguration(
+    cfg => cfg.CreateMap<Source, Destination>(),
+    loggerFactory);
+```
+
+Then map to whichever collection type your code needs:
+
+```csharp mapping to different collection types
+var sources = new[]
+{
+    new Source { Value = 5 },
+    new Source { Value = 6 },
+    new Source { Value = 7 }
+};
+
+var mapper = configuration.CreateMapper();
+
+IEnumerable<Destination> ienumerableDest = mapper.Map<Source[], IEnumerable<Destination>>(sources);
+ICollection<Destination> icollectionDest = mapper.Map<Source[], ICollection<Destination>>(sources);
+IList<Destination>       ilistDest       = mapper.Map<Source[], IList<Destination>>(sources);
+List<Destination>        listDest        = mapper.Map<Source[], List<Destination>>(sources);
+Destination[]            arrayDest       = mapper.Map<Source[], Destination[]>(sources);
+```
+
+<Note>
+  The destination collection type you specify in the `Map` call is honored — AutoMapper will produce the concrete type that satisfies the requested interface or class. No additional configuration is needed to switch between `List<T>`, `IList<T>`, arrays, and so on.
+</Note>
+
+## Supported collection types
+
+AutoMapper supports the following source collection types out of the box:
+
+- `IEnumerable` / `IEnumerable<T>`
+- `ICollection` / `ICollection<T>`
+- `IList` / `IList<T>`
+- `List<T>`
+- Arrays (`T[]`)
+
+<Warning>
+  Non-generic enumerable types (such as plain `IEnumerable` or `IList`) only work when the element types are directly assignable. AutoMapper cannot infer the element type for non-generic collections, so prefer the generic variants whenever possible.
+</Warning>
+
+## Null collection handling
+
+By default, AutoMapper maps a `null` source collection property to an empty collection on the destination — it does not propagate the null. This aligns with the .NET Framework Design Guidelines, which recommend that collection properties should never be `null`.
+
+To allow null collections to flow through to the destination, set `AllowNullCollections` globally:
+
+```csharp allow null collections globally
+var configuration = new MapperConfiguration(cfg =>
+{
+    cfg.AllowNullCollections = true;
+    cfg.CreateMap<Source, Destination>();
+}, loggerFactory);
+```
+
+<Tip>
+  `AllowNullCollections` can be overridden at the profile level, and per-member using `AllowNull()` or `DoNotAllowNull()` on individual member configurations. This lets you opt in or out of null propagation at the level of granularity your code requires.
+</Tip>
+
+## Mapping to an existing collection
+
+When you map into an existing destination collection (using the `Map(source, destination)` overload), AutoMapper clears the destination collection first and then populates it with the mapped elements.
+
+```csharp mapping into existing collection
+var existingList = new List<Destination> { new Destination { Value = 99 } };
+
+// existingList is cleared, then filled with mapped elements from sources
+mapper.Map(sources, existingList);
+```
+
+If you need merging behavior (adding or updating elements rather than replacing), see the [AutoMapper.Collection](https://github.com/AutoMapper/AutoMapper.Collection) extension package.
+
+## Polymorphic element types
+
+AutoMapper supports collections that contain a mix of base and derived types. When a source element's runtime type has a more specific map registered, that map is used automatically.
+
+```csharp polymorphic source and destination types
+public class ParentSource
+{
+    public int Value1 { get; set; }
+}
+
+public class ChildSource : ParentSource
+{
+    public int Value2 { get; set; }
+}
+
+public class ParentDestination
+{
+    public int Value1 { get; set; }
+}
+
+public class ChildDestination : ParentDestination
+{
+    public int Value2 { get; set; }
+}
+```
+
+Register the maps and declare the polymorphic relationship with `Include`:
+
+```csharp configuration with Include
+var configuration = new MapperConfiguration(c =>
+{
+    c.CreateMap<ParentSource, ParentDestination>()
+     .Include<ChildSource, ChildDestination>();
+    c.CreateMap<ChildSource, ChildDestination>();
+}, loggerFactory);
+```
+
+Mapping a mixed array produces destination objects of the correct derived types:
+
+```csharp polymorphic collection mapping
+var sources = new[]
+{
+    new ParentSource(),
+    new ChildSource(),
+    new ParentSource()
+};
+
+var destinations = mapper.Map<ParentSource[], ParentDestination[]>(sources);
+
+// destinations[0] is ParentDestination
+// destinations[1] is ChildDestination
+// destinations[2] is ParentDestination
+```
+
+<Note>
+  You must explicitly register derived type maps with `Include`. AutoMapper will not automatically select a derived destination type unless you tell it which source/destination pairs are related through inheritance.
+</Note>

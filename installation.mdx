@@ -1,0 +1,46 @@
+---
+title: "Install AutoMapper in your .NET project"
+description: "Add AutoMapper to your .NET project via the dotnet CLI or NuGet Package Manager. Supports .NET Standard 2.0, .NET 8, .NET 9, and .NET 10."
+---
+
+AutoMapper is distributed as a NuGet package and works with any .NET project targeting .NET Standard 2.0, .NET 8, .NET 9, or .NET 10. Install it once and it's available throughout your application.
+
+## Install the package
+
+<CodeGroup>
+
+```bash .NET CLI
+dotnet add package AutoMapper
+```
+
+```powershell NuGet Package Manager
+Install-Package AutoMapper
+```
+
+</CodeGroup>
+
+## Supported frameworks
+
+AutoMapper targets the following frameworks:
+
+- .NET Standard 2.0 (compatible with .NET Framework 4.7.1+ and .NET Core 2.0+)
+- .NET 8
+- .NET 9
+- .NET 10
+
+## License key
+
+AutoMapper 15.0 and later requires a license key. You set it when registering AutoMapper in your startup code:
+
+```csharp
+services.AddAutoMapper(cfg =>
+{
+    cfg.LicenseKey = "<your-license-key>";
+});
+```
+
+<Note>
+  Register for a free or commercial license at [automapper.io](https://automapper.io). For full details on where and how to supply the key, see [License Configuration](/advanced/license-configuration).
+</Note>
+
+Once the package is installed and your license key is ready, head to [Getting Started](/getting-started) to configure your first mapping.

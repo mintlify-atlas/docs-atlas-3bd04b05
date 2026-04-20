@@ -1,0 +1,129 @@
+---
+title: 'Reverse Mapping and Unflattening with AutoMapper'
+description: 'Use ReverseMap to create a bidirectional AutoMapper map, unflatten DTO properties to nested objects, and configure the reverse direction with ForPath.'
+keywords: ['ReverseMap', 'reverse mapping', 'unflattening', 'ForPath', 'bidirectional', 'CustomerName']
+---
+
+AutoMapper supports bidirectional mapping through `ReverseMap`, which creates an inverse type map from the destination type back to the source type in a single declaration. A key feature of `ReverseMap` is unflattening: it can reverse the PascalCase flattening convention, mapping a flat property like `CustomerName` back into a nested path like `Customer.Name`.
+
+## Basic reverse mapping
+
+Given these types:
+
+```csharp domain and DTO types
+public class Order
+{
+    public decimal Total { get; set; }
+    public Customer Customer { get; set; }
+}
+
+public class Customer
+{
+    public string Name { get; set; }
+}
+
+public class OrderDto
+{
+    public decimal Total { get; set; }
+    public string CustomerName { get; set; }
+}
+```
+
+Call `ReverseMap` after `CreateMap` to generate the inverse configuration:
+
+```csharp configure bidirectional map
+var configuration = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<Order, OrderDto>()
+       .ReverseMap();
+}, loggerFactory);
+```
+
+This creates both:
+- `Order` → `OrderDto` (flattening `Customer.Name` to `CustomerName`)
+- `OrderDto` → `Order` (unflattening `CustomerName` back to `Customer.Name`)
+
+```csharp round-trip mapping
+var customer = new Customer { Name = "Bob" };
+var order = new Order { Customer = customer, Total = 15.8m };
+
+// Forward map
+var orderDto = mapper.Map<Order, OrderDto>(order);
+
+// Modify DTO
+orderDto.CustomerName = "Joe";
+
+// Reverse map — unflattens CustomerName back into Customer.Name
+mapper.Map(orderDto, order);
+
+// order.Customer.Name == "Joe"
+order.Customer.Name.ShouldEqual("Joe");
+```
+
+<Note>
+  Unflattening is only available when you use `ReverseMap`. If you create two separate `CreateMap` calls (one in each direction), AutoMapper will not infer the unflattening path automatically. You must use `ReverseMap` on the original direction to get this behavior.
+</Note>
+
+## What ReverseMap does automatically
+
+When you call `ReverseMap`, AutoMapper:
+
+- Creates an inverse type map (`OrderDto` → `Order`)
+- Reverses any `MapFrom` member accessors where the path can be inverted (e.g., `src => src.Customer.Name` becomes an unflatten path for `CustomerName`)
+- Handles `IncludeMembers` by reversing included members to `ForPath` configurations
+
+What it does **not** do automatically:
+
+- Reverse complex computed lambda expressions (only simple member access paths can be inverted)
+- Reverse custom value resolvers or type converters
+
+## Using MapFrom with ReverseMap
+
+If you use `MapFrom` with a simple member accessor, AutoMapper will attempt to reverse that path automatically:
+
+```csharp MapFrom with automatic reversal
+cfg.CreateMap<Order, OrderDto>()
+   .ForMember(d => d.CustomerName, opt => opt.MapFrom(src => src.Customer.Name))
+   .ReverseMap();
+```
+
+AutoMapper reverses `src => src.Customer.Name` to unflatten `CustomerName` → `Customer.Name` on the reverse map. No additional configuration is required for this common case.
+
+## Customizing the reverse direction with ForPath
+
+When the automatic reversal is insufficient, or when you need to map along a different path in the reverse direction, use `ForPath` on the result of `ReverseMap`:
+
+```csharp ForPath for custom reverse configuration
+cfg.CreateMap<Order, OrderDto>()
+   .ForMember(d => d.CustomerName, opt => opt.MapFrom(src => src.Customer.Name))
+   .ReverseMap()
+   .ForPath(s => s.Customer.Name, opt => opt.MapFrom(src => src.CustomerName));
+```
+
+<Tip>
+  In most cases you do not need `ForPath` — AutoMapper's automatic reversal handles simple member access paths. Use `ForPath` only when the get and set paths for a value differ, or when you need to override what `ReverseMap` infers.
+</Tip>
+
+## Ignoring unflattening for specific members
+
+If you want a bidirectional map but do not want a particular member to be written back during the reverse mapping, use `Ignore` via `ForPath`:
+
+```csharp ignore a member in the reverse direction
+cfg.CreateMap<Order, OrderDto>()
+   .ForMember(d => d.CustomerName, opt => opt.MapFrom(src => src.Customer.Name))
+   .ReverseMap()
+   .ForPath(s => s.Customer.Name, opt => opt.Ignore());
+```
+
+Alternatively, avoid `ReverseMap` entirely and create two separate `CreateMap` calls when the forward and reverse configurations are substantially different.
+
+## ReverseMap and IncludeMembers
+
+`ReverseMap` integrates with `IncludeMembers`. When a member is included via `IncludeMembers`, the reverse map automatically generates a corresponding `ForPath` that maps the included member back from the flat destination into the appropriate child object:
+
+```csharp ReverseMap with IncludeMembers
+// Reversing an IncludeMembers relationship generates:
+// ForPath(destination => destination.IncludedMember, member => member.MapFrom(source => source))
+```
+
+If this default reversal is not what you need, either avoid `ReverseMap` and create the reverse map explicitly, or override the generated configuration with your own `ForPath` or `IncludeMembers` calls.

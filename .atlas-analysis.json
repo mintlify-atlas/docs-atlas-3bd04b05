@@ -1,0 +1,122 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "AutoMapper",
+  "projectDescription": "A convention-based object-object mapper for .NET that eliminates boilerplate mapping code between types.",
+  "theme": "luma",
+  "primaryColor": "#c71d25",
+  "lightColor": "#e48c94",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "getting-started"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/profiles",
+              "configuration/naming-conventions",
+              "configuration/attribute-mapping",
+              "configuration/dependency-injection",
+              "configuration/validation"
+            ]
+          },
+          {
+            "group": "Mapping Features",
+            "pages": [
+              "mapping/flattening",
+              "mapping/projection",
+              "mapping/nested-mappings",
+              "mapping/lists-and-arrays",
+              "mapping/inheritance",
+              "mapping/reverse-mapping",
+              "mapping/open-generics"
+            ]
+          },
+          {
+            "group": "Customization",
+            "pages": [
+              "customization/custom-value-resolvers",
+              "customization/custom-type-converters",
+              "customization/value-converters",
+              "customization/value-transformers",
+              "customization/conditional-mapping",
+              "customization/before-after-map",
+              "customization/null-substitution"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/queryable-extensions",
+              "advanced/dynamic-mapping",
+              "advanced/construction",
+              "advanced/understanding-your-mapping",
+              "advanced/license-configuration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Migration",
+        "groups": [
+          {
+            "group": "Upgrade Guides",
+            "pages": [
+              "migration/v15-upgrade",
+              "migration/v13-upgrade",
+              "migration/v12-upgrade",
+              "migration/older-versions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Convention-based automatic property mapping with zero configuration for matching names",
+    "Flattening and unflattening of complex object graphs",
+    "LINQ projection support via ProjectTo for efficient ORM queries",
+    "Custom value resolvers, type converters, and value converters for advanced scenarios",
+    "Mapping inheritance and runtime polymorphic mapping",
+    "ASP.NET Core dependency injection integration via AddAutoMapper",
+    "Attribute-based mapping as alternative to fluent API",
+    "Conditional mapping with pre-conditions and post-conditions",
+    "Configuration validation via AssertConfigurationIsValid",
+    "Supports .NET Standard 2.0, .NET 8, .NET 9, and .NET 10"
+  ],
+  "publicApiSurface": [
+    "IMapper.Map<TDestination>(object source)",
+    "IMapper.Map<TSource, TDestination>(TSource source)",
+    "IMapper.Map<TSource, TDestination>(TSource source, TDestination destination)",
+    "IMapper.ProjectTo<TDestination>(IQueryable source)",
+    "MapperConfiguration(cfg => { ... }, ILoggerFactory)",
+    "IMapperConfigurationExpression.CreateMap<TSource, TDestination>()",
+    "IMapperConfigurationExpression.AddProfile<TProfile>()",
+    "IMapperConfigurationExpression.AddMaps(Assembly)",
+    "IServiceCollection.AddAutoMapper(cfg => { ... }, assemblies)",
+    "MapperConfiguration.AssertConfigurationIsValid()",
+    "MapperConfiguration.CreateMapper()",
+    "IMappingExpression.ForMember(dest => dest.Prop, opt => opt.MapFrom(...))",
+    "IMappingExpression.ForAllMembers(opt => opt.Condition(...))",
+    "IMappingExpression.ConvertUsing<TTypeConverter>()",
+    "IMappingExpression.ReverseMap()",
+    "IMappingExpression.Include<TDerivedSource, TDerivedDest>()",
+    "IMappingExpression.IncludeBase<TSourceBase, TDestBase>()",
+    "IValueResolver<TSource, TDestination, TDestMember>",
+    "ITypeConverter<TSource, TDestination>",
+    "IValueConverter<TSourceMember, TDestinationMember>",
+    "IMappingAction<TSource, TDestination>",
+    "Profile (base class for organizing mapping configurations)",
+    "[AutoMap(typeof(SourceType))] attribute",
+    "IMapperConfigurationExpression.LicenseKey"
+  ]
+}

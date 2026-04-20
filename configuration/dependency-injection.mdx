@@ -1,0 +1,91 @@
+---
+title: 'Dependency Injection with AutoMapper in ASP.NET Core'
+description: 'Register AutoMapper with ASP.NET Core DI using AddAutoMapper, inject IMapper, auto-register resolvers, and configure static service location.'
+keywords: ['automapper', 'dependency injection', 'AddAutoMapper', 'IMapper', 'IValueResolver', 'ITypeConverter', 'ASP.NET Core']
+---
+
+Starting with AutoMapper 13.0, the `AddAutoMapper` extension method is part of the core package—there is no separate DI package to install. You register AutoMapper once at startup, and then inject `IMapper` anywhere in your application.
+
+## Registering AutoMapper
+
+Call `AddAutoMapper` on `IServiceCollection` in your startup code. Pass the assemblies that contain your `Profile` classes, either as `Assembly` instances or as marker types from those assemblies:
+
+<CodeGroup>
+
+```csharp By assembly
+services.AddAutoMapper(cfg => { }, profileAssembly1, profileAssembly2);
+```
+
+```csharp By marker type
+services.AddAutoMapper(cfg => { }, typeof(ProfileTypeFromAssembly1), typeof(ProfileTypeFromAssembly2));
+```
+
+</CodeGroup>
+
+AutoMapper will scan those assemblies for classes that inherit from `Profile` and register them automatically. Any inline configuration passed to the `cfg` lambda is applied on top of the discovered profiles.
+
+`AddAutoMapper` registers the following services:
+- `IConfigurationProvider` as **Singleton**
+- `IMapper` as **Transient** (configurable via the `serviceLifetime` parameter)
+
+## Injecting IMapper
+
+After calling `AddAutoMapper`, resolve `IMapper` through standard constructor injection in any service or controller:
+
+```csharp
+public class EmployeesController
+{
+    private readonly IMapper _mapper;
+
+    public EmployeesController(IMapper mapper) => _mapper = mapper;
+
+    // Use _mapper.Map<TDestination>(source) or _mapper.ProjectTo<TDestination>(queryable)
+}
+```
+
+## Automatic class registration
+
+`AddAutoMapper` scans the specified assemblies for concrete, non-abstract implementations of the following interfaces and registers each as **Transient**:
+
+| Interface | Purpose |
+|---|---|
+| `IValueResolver<TSource, TDestination, TDestMember>` | Resolves a destination member value from source. |
+| `IMemberValueResolver<TSource, TDestination, TSourceMember, TDestMember>` | Resolves a destination member from a specific source member. |
+| `ITypeConverter<TSource, TDestination>` | Converts an entire source object to the destination type. |
+| `IValueConverter<TSourceMember, TDestinationMember>` | Converts a single member value. |
+| `IDestinationFactory<TSource, TDestination>` | Creates the destination instance. |
+| `ICondition<TSource, TDestination, TMember>` | Applies a condition before mapping a member. |
+| `IPreCondition<TSource, TDestination>` | Applies a condition before mapping the whole object. |
+| `IMappingAction<TSource, TDestination>` | Runs custom logic before or after mapping. |
+
+Because these are registered as Transient, AutoMapper will resolve them from the DI container during `IMapper.Map` calls and they can themselves declare constructor dependencies.
+
+## Static service location
+
+If you are not using `AddAutoMapper` (for example, when configuring `MapperConfiguration` directly), you can wire up service resolution via `ConstructServicesUsing`:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.ConstructServicesUsing(ObjectFactory.GetInstance);
+    cfg.CreateMap<Source, Destination>();
+}, loggerFactory);
+```
+
+This allows custom value resolvers, type converters, and mapping actions to be instantiated through any service locator or IoC container.
+
+## Queryable extensions and DI limitations
+
+`IMapper.ProjectTo` translates mapping to LINQ expressions that your query provider executes. Because the expression tree is sent to the database (or another LINQ provider), it cannot call into the DI container at runtime.
+
+<Warning>
+Value resolvers and converters that depend on injected services work with `IMapper.Map`, but **not** with `ProjectTo`. Only mapping options supported by the underlying LINQ provider are available for projections.
+</Warning>
+
+For older AutoMapper versions (before 8.0) you need to pass the configuration provider explicitly:
+
+```csharp
+queryable.ProjectTo<DestinationType>(configurationProvider);
+```
+
+From version 8.0 onward, `IMapper.ProjectTo` is the recommended API.

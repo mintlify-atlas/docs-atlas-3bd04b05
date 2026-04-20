@@ -1,0 +1,105 @@
+---
+title: 'Nested Object Mappings in AutoMapper'
+description: 'Map nested object graphs by registering a map per type pair. Inner objects resolve via their own maps, with null handling built in to AutoMapper.'
+keywords: ['nested mappings', 'complex types', 'inner objects', 'OuterSource', 'InnerDest', 'type map']
+---
+
+AutoMapper can map nested objects as part of a larger mapping operation. When the mapping engine encounters a source member whose type has its own configured map, it automatically delegates to that inner map to produce the destination value. This lets you build complex destination object graphs without manually orchestrating each level of the hierarchy.
+
+## How nested mapping works
+
+When AutoMapper resolves a destination member of a complex type, it looks up a registered map for the source member's type paired with the destination member's type. If a map exists, it is applied recursively. This means you must register a separate `CreateMap` call for every type pair involved in the graph — but you do not need to reference those inner maps explicitly when calling `Map`.
+
+## Example: mapping nested objects
+
+Given a source model with a nested type:
+
+```csharp source types
+public class OuterSource
+{
+    public int Value { get; set; }
+    public InnerSource Inner { get; set; }
+}
+
+public class InnerSource
+{
+    public int OtherValue { get; set; }
+}
+```
+
+And a corresponding destination model:
+
+```csharp destination types
+public class OuterDest
+{
+    public int Value { get; set; }
+    public InnerDest Inner { get; set; }
+}
+
+public class InnerDest
+{
+    public int OtherValue { get; set; }
+}
+```
+
+Register both maps in a single configuration block:
+
+```csharp configuration
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<OuterSource, OuterDest>();
+    cfg.CreateMap<InnerSource, InnerDest>();
+}, loggerFactory);
+
+config.AssertConfigurationIsValid();
+```
+
+Then map the outer type — AutoMapper handles the inner mapping automatically:
+
+```csharp mapping
+var source = new OuterSource
+{
+    Value = 5,
+    Inner = new InnerSource { OtherValue = 15 }
+};
+
+var mapper = config.CreateMapper();
+var dest = mapper.Map<OuterSource, OuterDest>(source);
+
+// dest.Value            == 5
+// dest.Inner            != null
+// dest.Inner.OtherValue == 15
+```
+
+<Note>
+  The order in which you register type maps in `MapperConfiguration` does not matter. AutoMapper resolves all maps before executing any mapping, so `CreateMap<InnerSource, InnerDest>` can appear before or after `CreateMap<OuterSource, OuterDest>`.
+</Note>
+
+## Key rules for nested mappings
+
+<AccordionGroup>
+  <Accordion title="Every type pair needs its own map">
+    AutoMapper will not automatically create a map for `InnerSource` → `InnerDest` just because it created one for `OuterSource` → `OuterDest`. If a map for the inner type pair is missing, AutoMapper will throw a configuration exception. Call `AssertConfigurationIsValid()` during startup to catch missing maps early.
+  </Accordion>
+  <Accordion title="The Map call only requires the outermost type pair">
+    When you call `mapper.Map<OuterSource, OuterDest>(source)`, AutoMapper applies the inner map for `InnerSource` → `InnerDest` automatically without any additional instructions. You never need to call `Map` separately for nested objects.
+  </Accordion>
+  <Accordion title="Null handling for nested objects">
+    If `OuterSource.Inner` is `null` at runtime, AutoMapper sets `OuterDest.Inner` to `null` as well — it does not attempt to construct an empty `InnerDest`. This is the default behavior. If you need to produce a default instance when the source is null, configure that explicitly with `NullSubstitute` or a custom value resolver on the `Inner` member.
+  </Accordion>
+</AccordionGroup>
+
+## Flattening vs. nesting
+
+AutoMapper supports both directions:
+
+<CardGroup cols={2}>
+  <Card title="Flattening" icon="arrow-down-wide-narrow">
+    Map a nested source (`Order.Customer.Name`) to a flat destination (`OrderDto.CustomerName`) using PascalCase convention — no extra map needed for the child type.
+  </Card>
+  <Card title="Nesting" icon="sitemap">
+    Map a flat or nested source to a destination that preserves the nested structure by configuring a map for each type pair involved in the hierarchy.
+  </Card>
+</CardGroup>
+
+You can combine both techniques in the same configuration: flatten some members while preserving nested structure for others, depending on what the destination type requires.

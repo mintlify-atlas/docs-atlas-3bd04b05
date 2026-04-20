@@ -1,0 +1,66 @@
+---
+title: 'Value Transformers: Post-Assignment Transformations'
+description: 'Use AddTransform to apply an automatic post-resolution transformation to all mapped members of a given type, globally or within a profile.'
+keywords: ['value transformers', 'AddTransform', 'post-assignment', 'string trimming', 'global transform', 'profile scope']
+---
+
+Value transformers apply an additional transformation to a member value just before it is assigned to the destination property. After AutoMapper resolves the source value and any conversions, it checks whether a transformer is registered for that value's type and, if so, passes the value through the transformation function first.
+
+## How value transformers work
+
+You register a transformer for a specific type using `AddTransform<TValue>`. Whenever AutoMapper is about to assign a value of type `TValue` to a destination member, the transform function runs first. The final transformed value is what gets assigned.
+
+## Registering a global transformer
+
+A transformer registered on the root `MapperConfiguration` applies to all maps across the entire configuration:
+
+```csharp global transformer
+var configuration = new MapperConfiguration(cfg => {
+    cfg.ValueTransformers.Add<string>(val => val + "!!!");
+}, loggerFactory);
+
+var source = new Source { Value = "Hello" };
+var dest = mapper.Map<Dest>(source);
+
+dest.Value.ShouldBe("Hello!!!");
+```
+
+Every `string` member across every map in this configuration will have `"!!!"` appended automatically — no per-member configuration needed.
+
+## Scope levels
+
+You can add transformers at four different levels of scope, from broadest to narrowest:
+
+<AccordionGroup>
+  <Accordion title="Global">
+    Register on the `MapperConfiguration` via `cfg.ValueTransformers`. Applies to all maps in the configuration.
+
+    ```csharp global scope
+    cfg.ValueTransformers.Add<string>(val => val.Trim());
+    ```
+  </Accordion>
+  <Accordion title="Profile">
+    Register on a `Profile` instance. Applies only to maps defined within that profile.
+
+    ```csharp profile scope
+    public class MyProfile : Profile
+    {
+        public MyProfile()
+        {
+            this.ValueTransformers.Add<string>(val => val.Trim());
+            CreateMap<Source, Destination>();
+        }
+    }
+    ```
+  </Accordion>
+  <Accordion title="Map">
+    Register after `CreateMap` by chaining into the type map options. Applies only to that specific source/destination map.
+  </Accordion>
+  <Accordion title="Member">
+    Register inside a `ForMember` options action. Applies only to that single destination member.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  A common use case for profile-scoped transformers is automatic string trimming. Rather than guarding each resolver with `.Trim()`, register a single `string` transformer on the profile and every string member in that profile is trimmed automatically.
+</Tip>

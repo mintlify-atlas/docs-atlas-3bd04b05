@@ -1,0 +1,108 @@
+---
+title: 'Upgrading AutoMapper to version 15'
+description: 'Breaking changes in AutoMapper 15: license key requirement, AddAutoMapper signature changes, and MapperConfiguration ILoggerFactory dependency.'
+keywords: ['automapper', 'v15', 'upgrade', 'migration', 'license key', 'breaking changes']
+---
+
+AutoMapper 15 is a significant release that introduces a mandatory license requirement alongside support for .NET 8, .NET 9, and .NET Standard 2.0. All existing applications will need to update their configuration before upgrading — this page walks through each breaking change with before-and-after examples.
+
+## Target frameworks
+
+AutoMapper 15 targets **.NET 8**, **.NET 9**, and **.NET Standard 2.0**. If your application runs on .NET Framework, you must remain on an earlier version of AutoMapper.
+
+## License requirement
+
+<Warning>
+AutoMapper 15 requires a valid license key. Applications that do not supply a license key will fail at startup.
+</Warning>
+
+Starting with version 15, AutoMapper is a commercial library. You must obtain a license from [automapper.io](https://automapper.io) and supply it through the mapper configuration.
+
+```csharp
+services.AddAutoMapper(cfg => {
+    cfg.LicenseKey = "<License Key Here>";
+});
+```
+
+<Tip>
+Store your license key in an environment variable or a secret manager rather than committing it to source control.
+</Tip>
+
+## Breaking changes
+
+### `AddAutoMapper` overloads
+
+All `AddAutoMapper` overloads now require `Action<IMapperConfigurationExpression>` as the **first** parameter. This change was made to ensure every registration path has an opportunity to supply the license key.
+
+<CodeGroup>
+
+```csharp Before
+services.AddAutoMapper(typeof(Program));
+```
+
+```csharp After
+services.AddAutoMapper(cfg => cfg.LicenseKey = "<License Key Here>", typeof(Program));
+```
+
+</CodeGroup>
+
+<Note>
+The `Action<IMapperConfigurationExpression>` parameter is first across all `AddAutoMapper` overloads. Update every call site in your application.
+</Note>
+
+### `MapperConfiguration` constructor
+
+The `MapperConfiguration` constructor now requires an `ILoggerFactory` parameter. This is used internally for diagnostics and structured logging.
+
+<Warning>
+Any direct instantiation of `MapperConfiguration` without the `ILoggerFactory` argument will fail to compile after upgrading.
+</Warning>
+
+The updated constructor signature is:
+
+```csharp
+public MapperConfiguration(
+    MapperConfigurationExpression configurationExpression,
+    ILoggerFactory loggerFactory)
+```
+
+<Steps>
+  <Step title="Obtain an ILoggerFactory">
+    If you are using the Microsoft dependency injection container, resolve `ILoggerFactory` from the service provider or inject it into the class that creates your `MapperConfiguration`.
+
+    ```csharp
+    var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+    ```
+  </Step>
+  <Step title="Pass ILoggerFactory to MapperConfiguration">
+    Supply the factory as the second argument to the constructor.
+
+    ```csharp
+    var config = new MapperConfiguration(cfg =>
+    {
+        cfg.LicenseKey = "<License Key Here>";
+        cfg.CreateMap<Source, Destination>();
+    }, loggerFactory);
+    ```
+  </Step>
+  <Step title="Verify startup">
+    Run your application and confirm that no license or configuration exceptions are thrown at startup.
+  </Step>
+</Steps>
+
+## Migration checklist
+
+<CardGroup cols={2}>
+  <Card title="Register a license" icon="key">
+    Obtain a license key from automapper.io and set `cfg.LicenseKey` in your configuration action.
+  </Card>
+  <Card title="Update AddAutoMapper calls" icon="wrench">
+    Move the `Action<IMapperConfigurationExpression>` argument to the first position in every `AddAutoMapper` call.
+  </Card>
+  <Card title="Update MapperConfiguration" icon="hammer">
+    Pass an `ILoggerFactory` instance as the second argument to any direct `MapperConfiguration` constructor calls.
+  </Card>
+  <Card title="Verify target framework" icon="circle-check">
+    Confirm your project targets .NET 8, .NET 9, or .NET Standard 2.0 — .NET Framework is not supported.
+  </Card>
+</CardGroup>

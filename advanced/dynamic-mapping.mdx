@@ -1,0 +1,87 @@
+---
+title: 'Dynamic and ExpandoObject Mapping in AutoMapper'
+description: 'Map to and from dynamic objects, ExpandoObject, and Dictionary<string,object> without explicit configuration, using dot notation for nested members.'
+keywords: ['dynamic mapping', 'ExpandoObject', 'Dictionary mapping', 'dynamic objects', 'dot notation', 'AutoMapper dynamic']
+---
+
+AutoMapper can map to and from dynamic objects — including `ExpandoObject` and any type that implements the dynamic dispatch protocol — without any explicit map configuration. Member resolution works by matching property names on the destination type against keys on the dynamic source, and in reverse when projecting a static type into a dynamic target.
+
+## Mapping to and from dynamic objects
+
+No `CreateMap` call is required when either end of the mapping is dynamic. AutoMapper inspects the dynamic object's members at runtime and matches them by name to the destination type's properties:
+
+```csharp dynamic to static and back
+public class Foo {
+    public int Bar { get; set; }
+    public int Baz { get; set; }
+    public Foo InnerFoo { get; set; }
+}
+
+dynamic foo = new MyDynamicObject();
+foo.Bar = 5;
+foo.Baz = 6;
+
+var configuration = new MapperConfiguration(cfg => {}, loggerFactory);
+
+var result = mapper.Map<Foo>(foo);
+result.Bar.ShouldEqual(5);
+result.Baz.ShouldEqual(6);
+
+dynamic foo2 = mapper.Map<MyDynamicObject>(result);
+foo2.Bar.ShouldEqual(5);
+foo2.Baz.ShouldEqual(6);
+```
+
+AutoMapper matches `foo.Bar` to `Foo.Bar` and `foo.Baz` to `Foo.Baz` purely by name. The reverse mapping from `Foo` back to a dynamic object works the same way: each public property on the source is written as a dynamic member on the destination.
+
+## Mapping from Dictionary&lt;string, object&gt;
+
+`Dictionary<string, object>` is treated as a flat key-value source. AutoMapper lines up dictionary keys with destination property names, performing any necessary type conversion along the way:
+
+```csharp dictionary to static type
+var result = mapper.Map<Foo>(new Dictionary<string, object>
+{
+    ["Bar"] = 5,
+    ["Baz"] = 6
+});
+
+result.Bar.ShouldEqual(5);
+result.Baz.ShouldEqual(6);
+```
+
+### Mapping nested members with dot notation
+
+To populate properties on child objects, use dot notation in the dictionary key. AutoMapper traverses the destination object graph and sets the nested member:
+
+```csharp dot notation for nested members
+var result = mapper.Map<Foo>(new Dictionary<string, object> { ["InnerFoo.Bar"] = 42 });
+result.InnerFoo.Bar.ShouldEqual(42);
+```
+
+AutoMapper splits the key on `.`, resolves `InnerFoo` as a child destination object, then sets `Bar` on it. Intermediate objects are created as needed.
+
+<Note>
+  Dot notation only applies when mapping **from** a dictionary. When mapping a static type **to** a dynamic object, the output structure mirrors the source's property hierarchy.
+</Note>
+
+## How AutoMapper resolves dynamic members
+
+<Steps>
+  <Step title="Dynamic source to static destination">
+    AutoMapper reads the dynamic object's members using `IDynamicMetaObjectProvider` or reflection, then matches each member name to a writable property on the destination type. Unmatched dynamic members are silently ignored.
+  </Step>
+  <Step title="Static source to dynamic destination">
+    AutoMapper iterates the source type's readable public properties and writes each value as a member on the dynamic destination. For `ExpandoObject`, this populates the underlying dictionary. For custom dynamic types, the dynamic dispatch protocol handles the assignment.
+  </Step>
+  <Step title="Dictionary source">
+    AutoMapper iterates the dictionary's keys. For plain keys, it resolves a matching top-level property on the destination. For dot-delimited keys, it walks the property path and resolves the final segment on the nested object.
+  </Step>
+</Steps>
+
+<Tip>
+  Dynamic mapping is useful for mapping arbitrary JSON payloads, deserialized dictionaries, or loosely-typed view models. For type-safe, validated mappings with full customisation support, prefer `CreateMap` with explicit configuration.
+</Tip>
+
+<Warning>
+  Dynamic mapping bypasses `AssertConfigurationIsValid()`. Mismatched member names fail silently at runtime rather than at startup. If correctness guarantees matter, use a typed map instead.
+</Warning>

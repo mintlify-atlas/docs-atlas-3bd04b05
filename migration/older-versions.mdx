@@ -1,0 +1,85 @@
+---
+title: "AutoMapper upgrade guides for versions 5 through 11"
+description: "Summary of breaking changes and migration steps for AutoMapper versions 5.0 through 11.0. Check GitHub releases for full changelogs."
+---
+
+This page summarizes the headline breaking changes introduced in older AutoMapper versions (5.0 through 11.0). If you are upgrading across multiple major versions, work through each version's changes in order. For the complete list of changes, see the [GitHub releases page](https://github.com/LuckyPennySoftware/AutoMapper/releases).
+
+<Warning>
+  If you are upgrading to version 13 or 15, also read the dedicated guides: [v13 Upgrade](/migration/v13-upgrade) and [v15 Upgrade](/migration/v15-upgrade).
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="Version 11.0">
+    **Target framework**: .NET Standard 2.1 (drops .NET Framework support)
+
+    **Key breaking changes:**
+
+    - Advanced APIs (`ForAllMaps`, `ForAllPropertyMaps`, `Advanced`) are now hidden. Add `using AutoMapper.Internal;` and call `.Internal()` on the configuration object to access them.
+    - Mapping _into_ existing readonly collections (e.g., `IEnumerable<T>`) now replaces via the setter. To map _into_ the collection, use a writable type like `List<T>`, `ICollection<T>`, or set `UseDestinationValue`.
+    - `CreateProjection` is now the preferred method when you only use `ProjectTo` (not `Map`). It restricts to the API subset supported by LINQ projection and improves startup time.
+    - `System.ComponentModel.TypeConverter` support was removed for performance.
+    - Interface proxy generation is now disabled by default. Opt in per map with `.AsProxy()`.
+    - `MapToAttribute` and `IgnoreMapAttribute` (the older attribute API) were removed. Switch to the fluent API or the newer `[AutoMap]` attribute API.
+    - `ForAllOtherMembers` was removed. Use `MemberList.None` for validation-only scenarios.
+    - C# indexer properties (`Item`) are no longer ignored by default — explicitly ignore them with `ShouldMapProperty` or `GlobalIgnores` if needed.
+  </Accordion>
+
+  <Accordion title="Version 9.0">
+    **Key breaking changes:**
+
+    - **Static API removed.** `Mapper.Map(...)` and `Mapper.Initialize(...)` are gone. Switch to the instance-based API with `new Mapper(configuration)` or dependency injection via `AddAutoMapper`.
+    - **No more automatic map creation.** `CreateMissingTypeMaps` and convention-based automatic map creation were removed. All type pairs must be explicitly registered with `CreateMap` or via attribute mapping (`[AutoMap]`).
+  </Accordion>
+
+  <Accordion title="Version 8.0">
+    **Key breaking changes:**
+
+    - **`ProjectUsing` consolidated into `ConvertUsing`.** Replace all `ProjectUsing` calls with `ConvertUsing`. The expression-based overload now serves both in-memory mapping and LINQ projection.
+    - **`ConstructProjectionUsing` consolidated into `ConstructUsing`.** Replace all `ConstructProjectionUsing` calls with `ConstructUsing`.
+    - **`ResolveUsing` consolidated into `MapFrom`.** Replace all `ResolveUsing` calls with `MapFrom`. Expression-based `MapFrom` works for both mapping and projection.
+    - **`UseValue` consolidated into `MapFrom`.** Replace `opt.UseValue(x)` with `opt.MapFrom(src => x)`.
+    - **`ForSourceMember(...).Ignore()` renamed to `DoNotValidate()`.** The rename clarifies it only affects source-member validation, not the mapping itself.
+
+    ```csharp
+    // Before (v7)
+    cfg.CreateMap<Source, Dest>()
+        .ForMember(d => d.Date, opt => opt.UseValue(DateTime.Now));
+
+    // After (v8+)
+    cfg.CreateMap<Source, Dest>()
+        .ForMember(d => d.Date, opt => opt.MapFrom(src => DateTime.Now));
+    ```
+  </Accordion>
+
+  <Accordion title="Version 5.0">
+    **Key changes:**
+
+    - **Profile configuration moved to constructor.** The `Configure()` override on `Profile` is obsolete. Move your `CreateMap` calls into the profile's constructor instead.
+    - **`MapFrom` now accepts any expression.** Previously restricted to single source members; now accepts arbitrary `Func<TSource, TResult>` expressions, making `ResolveUsing` redundant (eventually removed in v8).
+
+    ```csharp
+    // Before (v4 and earlier)
+    public class MyProfile : Profile
+    {
+        protected override void Configure()
+        {
+            CreateMap<Foo, FooDto>();
+        }
+    }
+
+    // After (v5+)
+    public class MyProfile : Profile
+    {
+        public MyProfile()
+        {
+            CreateMap<Foo, FooDto>();
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  For the complete release notes for each version, visit the [AutoMapper releases page](https://github.com/LuckyPennySoftware/AutoMapper/releases) on GitHub.
+</Note>

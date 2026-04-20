@@ -1,0 +1,101 @@
+---
+title: 'Projection and Custom Member Mapping in AutoMapper'
+description: 'Use ForMember and MapFrom to map values into non-matching destination properties, including splitting one source property across multiple fields.'
+keywords: ['projection', 'ForMember', 'MapFrom', 'CalendarEvent', 'custom mapping', 'lambda']
+---
+
+Projection goes beyond flattening: it lets you map source values into a destination shape that does not follow the source's naming structure at all. While AutoMapper's convention-based flattening handles straightforward name transformations automatically, projection is the tool to reach for when the destination's property names or types diverge from the source in ways that cannot be inferred by convention.
+
+## Projection vs. flattening
+
+<CardGroup cols={2}>
+  <Card title="Flattening (convention-based)" icon="layers">
+    AutoMapper resolves `CustomerName` from `Customer.Name` automatically by splitting PascalCase names. No extra configuration is needed as long as the destination name mirrors the source path.
+  </Card>
+  <Card title="Projection (explicit mapping)" icon="arrow-right-left">
+    When destination property names do not match any convention-resolvable source path, you use `ForMember` with `MapFrom` to define the mapping explicitly with a lambda expression.
+  </Card>
+</CardGroup>
+
+## Example: CalendarEvent to CalendarEventForm
+
+Consider a `CalendarEvent` source type that stores a full `DateTime`, and a `CalendarEventForm` destination that needs the date, hour, and minute as separate properties:
+
+```csharp source and destination types
+public class CalendarEvent
+{
+    public DateTime Date { get; set; }
+    public string Title { get; set; }
+}
+
+public class CalendarEventForm
+{
+    public DateTime EventDate { get; set; }
+    public int EventHour { get; set; }
+    public int EventMinute { get; set; }
+    public string Title { get; set; }
+}
+```
+
+`Title` maps by convention (same name on both sides). The remaining three properties need explicit configuration because:
+
+- `EventDate` does not follow the `Date` → `EventDate` PascalCase pattern AutoMapper expects
+- `EventHour` and `EventMinute` are derived from sub-properties of `Date`, not from top-level source members
+
+<Steps>
+  <Step title="Configure the projection map">
+    Use `ForMember` for each property that cannot be resolved by convention. Each call takes a destination selector and an options action with `MapFrom`:
+
+    ```csharp configure projection
+    var configuration = new MapperConfiguration(cfg =>
+        cfg.CreateMap<CalendarEvent, CalendarEventForm>()
+            .ForMember(dest => dest.EventDate,   opt => opt.MapFrom(src => src.Date.Date))
+            .ForMember(dest => dest.EventHour,   opt => opt.MapFrom(src => src.Date.Hour))
+            .ForMember(dest => dest.EventMinute, opt => opt.MapFrom(src => src.Date.Minute)),
+        loggerFactory);
+    ```
+  </Step>
+  <Step title="Build the source object">
+    ```csharp build source
+    var calendarEvent = new CalendarEvent
+    {
+        Date = new DateTime(2008, 12, 15, 20, 30, 0),
+        Title = "Company Holiday Party"
+    };
+    ```
+  </Step>
+  <Step title="Perform the mapping">
+    ```csharp map
+    var mapper = configuration.CreateMapper();
+    CalendarEventForm form = mapper.Map<CalendarEvent, CalendarEventForm>(calendarEvent);
+
+    // form.EventDate   == new DateTime(2008, 12, 15)
+    // form.EventHour   == 20
+    // form.EventMinute == 30
+    // form.Title       == "Company Holiday Party"
+    ```
+  </Step>
+</Steps>
+
+## How MapFrom works
+
+The `MapFrom` method accepts any `Func<TSource, object>` lambda expression. The lambda is compiled and cached at configuration time, then evaluated during each `Map` call.
+
+```csharp MapFrom signatures
+// Map from a nested property
+.ForMember(dest => dest.EventDate, opt => opt.MapFrom(src => src.Date.Date))
+
+// Map from a computed expression
+.ForMember(dest => dest.EventHour, opt => opt.MapFrom(src => src.Date.Hour))
+
+// Map from a method call on the source
+.ForMember(dest => dest.Total, opt => opt.MapFrom(src => src.GetTotal()))
+```
+
+<Note>
+  `Title` does not need a `ForMember` call in the example above — AutoMapper matches it by name convention automatically. Only specify `ForMember` for members that cannot be resolved by convention.
+</Note>
+
+<Warning>
+  AutoMapper validates that all destination members are mapped when you call `AssertConfigurationIsValid()`. If you add a new property to `CalendarEventForm` and forget to configure it, the validation will fail at startup rather than silently producing null values at runtime.
+</Warning>

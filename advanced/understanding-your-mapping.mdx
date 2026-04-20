@@ -1,0 +1,106 @@
+---
+title: 'Understanding and Debugging Your AutoMapper Mappings'
+description: 'Inspect AutoMapper execution plans with BuildExecutionPlan, read expression trees, and traverse TypeMap and PropertyMap to diagnose mapping issues.'
+keywords: ['BuildExecutionPlan', 'execution plan', 'expression tree', 'TypeMap', 'PropertyMap', 'debugging', 'AutoMapper diagnostics', 'GetAllTypeMaps']
+---
+
+AutoMapper compiles each mapping into an expression tree at configuration time and caches the result as a typed delegate. When a mapping behaves unexpectedly, reading that execution plan is the most direct path to understanding what AutoMapper will do — and why. This page covers the tools available for inspecting mappings without having to step through the AutoMapper source.
+
+## Reading the execution plan
+
+`BuildExecutionPlan` returns the compiled `Expression` for a given source-to-destination type pair. You can examine it in the debugger or print it as readable code:
+
+```csharp build and inspect execution plan
+var configuration = new MapperConfiguration(cfg => cfg.CreateMap<Foo, Bar>(), loggerFactory);
+var executionPlan = configuration.BuildExecutionPlan(typeof(Foo), typeof(Bar));
+```
+
+The returned value is a `LambdaExpression`. In the Visual Studio debugger, expand the `Body` property to navigate the expression tree. Each `MemberBinding` in a `MemberInitExpression` corresponds to one destination property.
+
+<Warning>
+  Remove all `BuildExecutionPlan` calls before releasing to production. The method is intended exclusively for debugging and diagnostic work during development.
+</Warning>
+
+## Making the expression tree readable
+
+Raw expression trees are verbose. Two tools make them significantly easier to read:
+
+<CardGroup cols={2}>
+  <Card title="ReadableExpressions VS extension" icon="eye">
+    Install the [ReadableExpressions visualiser](https://marketplace.visualstudio.com/items?itemName=vs-publisher-1232914.ReadableExpressionsVisualizers) from the Visual Studio Marketplace. It adds a custom debugger visualiser that renders the expression as C# source code directly in the debugger.
+  </Card>
+  <Card title="ReadableExpressions NuGet package" icon="package">
+    Use the [AgileObjects.ReadableExpressions](https://www.nuget.org/packages/AgileObjects.ReadableExpressions) package to convert an expression to a readable string in code — useful in test output or when working outside Visual Studio.
+  </Card>
+</CardGroup>
+
+A live demo using the NuGet package is available on [DotNetFiddle](https://dotnetfiddle.net/aJYTGZ).
+
+## Inspecting a ProjectTo expression
+
+For `ProjectTo` mappings, the execution plan is not accessed through `BuildExecutionPlan`. Instead, inspect `IQueryable.Expression` on the projected query before it executes:
+
+```csharp inspect ProjectTo expression
+var expression = context.Entities.ProjectTo<Dto>(configuration).Expression;
+```
+
+Examining this expression shows the full `Select` lambda that AutoMapper generated, including any parameterisation or explicit expansion that was applied.
+
+## Exploring TypeMap and PropertyMap
+
+`IConfigurationProvider` exposes the internal mapping model, which you can traverse programmatically to diagnose configuration issues.
+
+<AccordionGroup>
+  <Accordion title="Listing all registered type maps">
+    ```csharp get all type maps
+    var configuration = new MapperConfiguration(cfg =>
+    {
+        cfg.CreateMap<Foo, Bar>();
+        cfg.CreateMap<Source, Destination>();
+    }, loggerFactory);
+
+    // Returns all TypeMap instances registered in the configuration
+    var allTypeMaps = configuration.GetAllTypeMaps();
+    foreach (var typeMap in allTypeMaps)
+    {
+        Console.WriteLine($"{typeMap.SourceType.Name} -> {typeMap.DestinationType.Name}");
+    }
+    ```
+  </Accordion>
+  <Accordion title="Inspecting individual property maps">
+    Each `TypeMap` contains a collection of `PropertyMap` objects — one per destination member. You can inspect them to understand how each member will be resolved:
+
+    ```csharp inspect property maps
+    var typeMap = configuration.GetAllTypeMaps()
+        .Single(tm => tm.SourceType == typeof(Foo) && tm.DestinationType == typeof(Bar));
+
+    foreach (var propertyMap in typeMap.PropertyMaps)
+    {
+        Console.WriteLine($"  {propertyMap.DestinationName}: " +
+            $"ignored={propertyMap.Ignored}, " +
+            $"canResolve={propertyMap.CanResolveValue}");
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Diagnosing common mapping issues
+
+<Steps>
+  <Step title="Run AssertConfigurationIsValid">
+    Call `configuration.AssertConfigurationIsValid()` at startup. It throws a descriptive `AutoMapperConfigurationException` for every destination member that cannot be resolved — including missing maps, unmapped properties, and configuration errors.
+  </Step>
+  <Step title="Read the execution plan">
+    If validation passes but mapping produces incorrect values, call `BuildExecutionPlan` for the relevant type pair and read the generated expression. Look at how each destination member binding resolves its source value.
+  </Step>
+  <Step title="Check PropertyMap flags">
+    Iterate `TypeMap.PropertyMaps` and print `CanResolveValue`, `Ignored`, and `SourceMembers` for the property behaving incorrectly. A property with `Ignored = true` or `CanResolveValue = false` will not be mapped.
+  </Step>
+  <Step title="Inspect the ProjectTo expression">
+    For ORM-backed projections, inspect `IQueryable.Expression` after calling `ProjectTo`. Compare the generated `Select` lambda against the SQL produced by your ORM to identify discrepancies between the expected and actual query.
+  </Step>
+</Steps>
+
+<Tip>
+  The ReadableExpressions package prints an expression as idiomatic C# with a single method call. Adding this to a failing unit test gives you a plain-text snapshot of the execution plan that you can paste into a bug report or code review.
+</Tip>

@@ -1,0 +1,144 @@
+---
+title: 'Naming Conventions and Member Filtering'
+description: 'Configure AutoMapper naming conventions, member name substitution, prefix recognition, and property/field visibility filters for precise member matching.'
+keywords: ['automapper', 'naming convention', 'ReplaceMemberName', 'RecognizePrefixes', 'ShouldMapProperty', 'ShouldMapField']
+---
+
+AutoMapper resolves source and destination members by convention. By default it matches public properties whose names align under PascalCase, and it recognizes the `Get` prefix on source members. Every aspect of this behavior is configurable—you can switch naming conventions, substitute characters or words, strip custom prefixes, and control which fields and properties are considered at all.
+
+## Source and destination naming conventions
+
+Set `SourceMemberNamingConvention` and `DestinationMemberNamingConvention` to tell AutoMapper how to tokenize member names before matching them. The built-in conventions are `LowerUnderscoreNamingConvention` and `PascalCaseNamingConvention`.
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.SourceMemberNamingConvention = LowerUnderscoreNamingConvention.Instance;
+    cfg.DestinationMemberNamingConvention = PascalCaseNamingConvention.Instance;
+}, loggerFactory);
+```
+
+With this configuration, `property_name` on the source matches `PropertyName` on the destination.
+
+You can also configure conventions per profile so they apply only to maps within that profile:
+
+```csharp
+public class OrganizationProfile : Profile
+{
+    public OrganizationProfile()
+    {
+        SourceMemberNamingConvention = LowerUnderscoreNamingConvention.Instance;
+        DestinationMemberNamingConvention = PascalCaseNamingConvention.Instance;
+
+        CreateMap<Foo, FooDto>();
+    }
+}
+```
+
+<Tip>
+To disable name tokenization and flattening entirely, use `ExactMatchNamingConvention`. Members must then match by exact name.
+</Tip>
+
+## Replacing characters and words
+
+`ReplaceMemberName` substitutes individual characters or entire words during member name matching. This is useful when source member names contain non-ASCII characters or use different terminology than the destination.
+
+```csharp
+public class Source
+{
+    public int Value { get; set; }
+    public int Ävíator { get; set; }
+    public int SubAirlinaFlight { get; set; }
+}
+
+public class Destination
+{
+    public int Value { get; set; }
+    public int Aviator { get; set; }
+    public int SubAirlineFlight { get; set; }
+}
+```
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.ReplaceMemberName("Ä", "A");
+    cfg.ReplaceMemberName("í", "i");
+    cfg.ReplaceMemberName("Airlina", "Airline");
+}, loggerFactory);
+```
+
+## Recognizing prefixes and postfixes
+
+Source properties sometimes carry a common prefix (or postfix) that does not appear on the destination. Instead of writing explicit member mappings for every property, register the prefix with `RecognizePrefixes`:
+
+```csharp
+public class Source
+{
+    public int frmValue { get; set; }
+    public int frmValue2 { get; set; }
+}
+
+public class Dest
+{
+    public int Value { get; set; }
+    public int Value2 { get; set; }
+}
+
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.RecognizePrefixes("frm");
+    cfg.CreateMap<Source, Dest>();
+}, loggerFactory);
+
+config.AssertConfigurationIsValid();
+```
+
+AutoMapper recognizes the `Get` prefix by default. To clear all registered prefixes before adding your own:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.ClearPrefixes();
+    cfg.RecognizePrefixes("tmp");
+}, loggerFactory);
+```
+
+<Note>
+`RecognizePostfixes`, `RecognizeDestinationPrefixes`, and `RecognizeDestinationPostfixes` are also available on `Profile` for destination-side or postfix scenarios.
+</Note>
+
+## Global property and field filters
+
+By default AutoMapper maps every public property and public field. Use `ShouldMapProperty` and `ShouldMapField` to restrict which members are considered:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    // Do not map any fields at all.
+    cfg.ShouldMapField = fi => false;
+
+    // Map properties that have a public or private getter.
+    cfg.ShouldMapProperty = pi =>
+        pi.GetMethod != null && (pi.GetMethod.IsPublic || pi.GetMethod.IsPrivate);
+}, loggerFactory);
+```
+
+## Configuring visibility
+
+AutoMapper skips internal and private members by default. To include them, override the default filters:
+
+```csharp
+var config = new MapperConfiguration(cfg =>
+{
+    // Map properties with a public or internal getter.
+    cfg.ShouldMapProperty = p => p.GetMethod.IsPublic || p.GetMethod.IsAssembly;
+    cfg.CreateMap<Source, Destination>();
+}, loggerFactory);
+```
+
+<Warning>
+Enabling internal or private member mapping can couple your mapping configuration tightly to implementation details. Use this sparingly and prefer making members public where possible.
+</Warning>
+
+Both `ShouldMapProperty` and `ShouldMapField` are also settable per profile (`Profile.ShouldMapProperty`, `Profile.ShouldMapField`), so you can limit the override to a subset of your maps.

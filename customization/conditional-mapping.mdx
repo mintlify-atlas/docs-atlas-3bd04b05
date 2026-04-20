@@ -1,0 +1,152 @@
+---
+title: 'Conditional Mapping with Condition and PreCondition'
+description: 'Gate destination member assignment in AutoMapper with Condition or PreCondition using inline lambdas or DI-injectable class-based implementations.'
+keywords: ['Condition', 'PreCondition', 'conditional mapping', 'ICondition', 'IPreCondition', 'dependency injection', 'AutoMapper']
+---
+
+Conditional mapping lets you prevent AutoMapper from assigning a destination member unless a specific condition is met. Two distinct hooks are available — `Condition` and `PreCondition` — and they run at different points in the mapping pipeline, which matters when your mapping involves expensive resolution or custom logic.
+
+## Condition (post-resolution)
+
+`Condition` runs **after** AutoMapper has resolved the source value. If the condition returns `false`, the resolved value is discarded and the destination member is left unchanged.
+
+```csharp condition example
+class Foo
+{
+    public int baz;
+}
+
+class Bar
+{
+    public uint baz;
+}
+
+var configuration = new MapperConfiguration(cfg => {
+  cfg.CreateMap<Foo, Bar>()
+    .ForMember(dest => dest.baz, opt => opt.Condition(src => (src.baz >= 0)));
+}, loggerFactory);
+```
+
+Here, `baz` is only mapped when the source value is non-negative. Negative values leave the destination member at its default.
+
+## PreCondition (pre-resolution)
+
+`PreCondition` runs **before** AutoMapper resolves the source value. This is the right choice when your resolver (`MapFrom`) performs expensive or potentially unsafe work that should be skipped entirely when the condition is not met.
+
+```csharp precondition example
+var configuration = new MapperConfiguration(cfg => {
+  cfg.CreateMap<Foo, Bar>()
+    .ForMember(dest => dest.baz, opt => {
+        opt.PreCondition(src => (src.baz >= 0));
+        opt.MapFrom(src => {
+            // Expensive resolution process that can be avoided with a PreCondition
+        });
+    });
+}, loggerFactory);
+```
+
+The pipeline order is: **PreCondition → resolve source value → Condition → assign**.
+
+<Warning>
+  If you use `Condition` (not `PreCondition`) alongside a custom `MapFrom` that can throw — for example, accessing a property on a potentially null value — AutoMapper still attempts resolution before evaluating the condition. The exception occurs before the condition has a chance to prevent the assignment. Use `PreCondition` to guard against this, or write the resolver expression defensively. See [resolvers and conditions](/customization/custom-value-resolvers#resolvers-and-conditions) for a concrete example.
+</Warning>
+
+## Class-based conditions
+
+Instead of inline lambdas, you can implement conditions as classes. This enables reuse across multiple mappings and supports dependency injection for accessing services.
+
+### ICondition
+
+`ICondition<TSource, TDestination, TMember>` is evaluated after source member resolution. It receives both source and destination member values:
+
+```csharp ICondition interface
+public interface ICondition<in TSource, in TDestination, in TMember>
+{
+    bool Evaluate(TSource source, TDestination destination, TMember sourceMember, TMember destMember, ResolutionContext context);
+}
+```
+
+### IPreCondition
+
+`IPreCondition<TSource, TDestination>` is evaluated before source member resolution. It does not have access to member values:
+
+```csharp IPreCondition interface
+public interface IPreCondition<in TSource, in TDestination>
+{
+    bool Evaluate(TSource source, TDestination destination, ResolutionContext context);
+}
+```
+
+### Usage example
+
+```csharp class-based conditions
+public class AgeCondition : ICondition<Person, PersonDto, int>
+{
+    public bool Evaluate(Person source, PersonDto destination, int sourceMember, int destMember, ResolutionContext context)
+        => sourceMember >= 18;
+}
+
+public class SourceNotNullPreCondition : IPreCondition<Person, PersonDto>
+{
+    public bool Evaluate(Person source, PersonDto destination, ResolutionContext context)
+        => source != null;
+}
+
+cfg.CreateMap<Person, PersonDto>()
+    .ForMember(d => d.Age, o =>
+    {
+        o.Condition<AgeCondition>();
+        o.MapFrom(s => s.Age);
+    })
+    .ForMember(d => d.Name, o =>
+    {
+        o.PreCondition<SourceNotNullPreCondition>();
+        o.MapFrom(s => s.Name);
+    });
+```
+
+For runtime type resolution, use the non-generic overloads that accept `System.Type`:
+
+```csharp runtime type resolution
+cfg.CreateMap(typeof(Person), typeof(PersonDto))
+    .ForMember(nameof(PersonDto.Age), o =>
+    {
+        o.Condition(typeof(AgeCondition));
+        o.MapFrom(nameof(Person.Age));
+    });
+```
+
+## Dependency injection for conditions
+
+Class-based conditions are resolved from the DI container, enabling constructor injection of services:
+
+```csharp DI condition
+public class AgeRestrictedContentCondition : ICondition<User, UserDto, int>
+{
+    private readonly IAgeRestrictionService _ageService;
+
+    public AgeRestrictedContentCondition(IAgeRestrictionService ageService)
+    {
+        _ageService = ageService;
+    }
+
+    public bool Evaluate(User source, UserDto destination, int sourceMember, int destMember, ResolutionContext context)
+        => _ageService.CanAccessAdultContent(sourceMember);
+}
+
+// Registration
+services.AddScoped<IAgeRestrictionService, AgeRestrictionService>();
+services.AddAutoMapper(cfg =>
+{
+    cfg.CreateMap<User, UserDto>()
+        .ForMember(d => d.RestrictedContent, o =>
+        {
+            o.Condition<AgeRestrictedContentCondition>();
+            o.MapFrom(s => s.RestrictedContent);
+        });
+});
+```
+
+<Note>
+  Condition instances are resolved when the map executes via `ResolutionContext.CreateInstance`, using your configured `ServiceCtor` or DI container. This means DI resolution can happen per mapping operation rather than once at configuration time. For per-map scoping or nested containers, supply a per-map `ServiceCtor` through `IMappingOperationOptions` when invoking the map.
+</Note>

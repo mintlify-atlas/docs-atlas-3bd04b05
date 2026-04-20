@@ -1,0 +1,93 @@
+---
+title: 'Value Converters: Scoped Member-Level Type Conversion'
+description: 'Use IValueConverter to apply reusable member-level conversions scoped to a single AutoMapper map, distinct from the global scope of ITypeConverter.'
+keywords: ['IValueConverter', 'ConvertUsing', 'member-level conversion', 'CurrencyFormatter', 'ForMember', 'AutoMapper']
+---
+
+Value converters sit between type converters and value resolvers in AutoMapper's customization hierarchy. They convert a single source member value to a destination member value, and they are scoped to a specific map — not applied globally like `ITypeConverter`. This makes them ideal for formatting or transforming a member value in a way that should only apply in one mapping context.
+
+## How value converters compare
+
+It helps to see all three member-mapping strategies side by side:
+
+| Abstraction | Simplified signature | Scope |
+|---|---|---|
+| Type converter | `Func<TSource, TDestination, TDestination>` | Global — all maps |
+| Value resolver | `Func<TSource, TDestination, TDestinationMember>` | One map, one member |
+| Member value resolver | `Func<TSource, TDestination, TSourceMember, TDestinationMember>` | One map, one member (source-member aware) |
+| **Value converter** | `Func<TSourceMember, TDestinationMember>` | One map, one member |
+
+Value converters receive only the source member value (and a `ResolutionContext`), not the full source or destination objects.
+
+## The IValueConverter interface
+
+```csharp interface
+public interface IValueConverter<TSourceMember, TDestinationMember>
+{
+    TDestinationMember Convert(TSourceMember sourceMember, ResolutionContext context);
+}
+```
+
+## Basic usage
+
+Configure a value converter with `ForMember` and `ConvertUsing`, passing a converter instance:
+
+```csharp basic usage
+public class CurrencyFormatter : IValueConverter<decimal, string>
+{
+    public string Convert(decimal source, ResolutionContext context)
+        => source.ToString("c");
+}
+
+var configuration = new MapperConfiguration(cfg => {
+   cfg.CreateMap<Order, OrderDto>()
+       .ForMember(d => d.Amount, opt => opt.ConvertUsing(new CurrencyFormatter()));
+   cfg.CreateMap<OrderLineItem, OrderLineItemDto>()
+       .ForMember(d => d.Total, opt => opt.ConvertUsing(new CurrencyFormatter()));
+}, loggerFactory);
+```
+
+The same `CurrencyFormatter` instance applies the same formatting logic to both maps independently, without registering a global `string → decimal` type converter that would affect every map.
+
+## Customizing the source member
+
+When the source member name does not match the destination member name, supply a source selector as the second argument to `ConvertUsing`:
+
+```csharp custom source member
+var configuration = new MapperConfiguration(cfg => {
+   cfg.CreateMap<Order, OrderDto>()
+       .ForMember(d => d.Amount, opt => opt.ConvertUsing(new CurrencyFormatter(), src => src.OrderAmount));
+   cfg.CreateMap<OrderLineItem, OrderLineItemDto>()
+       .ForMember(d => d.Total, opt => opt.ConvertUsing(new CurrencyFormatter(), src => src.LITotal));
+}, loggerFactory);
+```
+
+## Using dependency injection
+
+If you want AutoMapper to resolve the converter from the DI container, pass the type instead of an instance:
+
+```csharp DI-resolved converter
+var configuration = new MapperConfiguration(cfg => {
+   cfg.CreateMap<Order, OrderDto>()
+       .ForMember(d => d.Amount, opt => opt.ConvertUsing<CurrencyFormatter, decimal>());
+   cfg.CreateMap<OrderLineItem, OrderLineItemDto>()
+       .ForMember(d => d.Total, opt => opt.ConvertUsing<CurrencyFormatter, decimal>());
+}, loggerFactory);
+```
+
+## Using string-based member names
+
+When types and member names are not known until runtime, use the non-generic `CreateMap` overload and string-based `ForMember`:
+
+```csharp runtime type mapping
+var configuration = new MapperConfiguration(cfg => {
+   cfg.CreateMap(typeof(Order), typeof(OrderDto))
+       .ForMember("Amount", opt => opt.ConvertUsing(new CurrencyFormatter(), "OrderAmount"));
+   cfg.CreateMap(typeof(OrderLineItem), typeof(OrderLineItemDto))
+       .ForMember("Total", opt => opt.ConvertUsing(new CurrencyFormatter(), "LITotal"));
+}, loggerFactory);
+```
+
+<Warning>
+  Value converters are only executed during in-memory mapping. They are **not** supported by `ProjectTo` (LINQ projection). If you need to format values in a queryable projection, apply the transformation in the query itself or in a separate post-projection step.
+</Warning>

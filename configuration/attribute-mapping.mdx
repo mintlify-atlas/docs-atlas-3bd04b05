@@ -1,0 +1,175 @@
+---
+title: 'Attribute Mapping with AutoMap and Annotations'
+description: 'Declare AutoMapper type maps and member configuration using [AutoMap], [Ignore], [SourceMember], and other annotation attributes without fluent configuration.'
+keywords: ['automapper', 'AutoMap', 'attribute mapping', 'Ignore', 'SourceMember', 'ValueResolver', 'ValueConverter']
+---
+
+AutoMapper supports declaring maps directly on your destination classes using attributes. Attribute-based maps can supplement or fully replace fluent `Profile` configuration. They are discovered automatically during the same assembly-scanning pass as profiles.
+
+## Declaring a type map
+
+Decorate your destination type with `[AutoMap(typeof(SourceType))]`. This is equivalent to calling `CreateMap<SourceType, DestinationType>()` in a profile.
+
+```csharp
+[AutoMap(typeof(Order))]
+public class OrderDto
+{
+    // destination members
+}
+```
+
+To discover attribute maps (and profiles) in an assembly, use `AddMaps`:
+
+```csharp
+var config = new MapperConfiguration(cfg => cfg.AddMaps("MyAssembly"), loggerFactory);
+var mapper = new Mapper(config);
+```
+
+`AddMaps` handles both fluent `Profile` classes and `[AutoMap]`-decorated types in a single scan.
+
+## Type map configuration properties
+
+`AutoMapAttribute` exposes the same options available in the fluent API as simple properties:
+
+| Property | Type | Description |
+|---|---|---|
+| `ReverseMap` | `bool` | Also create the reverse map. |
+| `ConstructUsingServiceLocator` | `bool` | Construct the destination via the service locator. |
+| `MaxDepth` | `int` | Limit recursion depth for self-referential types. |
+| `PreserveReferences` | `bool` | Preserve object identity to handle circular references. |
+| `DisableCtorValidation` | `bool` | Skip constructor validation during configuration. |
+| `IncludeAllDerived` | `bool` | Apply this map configuration to all derived types. |
+| `TypeConverter` | `Type` | Use a type converter instead of member mapping. |
+| `AsProxy` | `bool` | Create a proxy instead of a concrete destination instance. |
+
+Only `sourceType` is required. Example with several options set:
+
+```csharp
+[AutoMap(typeof(Order), ReverseMap = true, PreserveReferences = true, MaxDepth = 3)]
+public class OrderDto
+{
+    // destination members
+}
+```
+
+<Note>
+C# attributes do not support expressions. Configuration that requires a lambda—such as `MapFrom(src => src.Customer.Name)` for flattening—is only available through fluent configuration in a `Profile`. You can combine both approaches on the same type map.
+</Note>
+
+## Member attributes
+
+Member-level attributes live in the `AutoMapper.Configuration.Annotations` namespace. Apply them to destination properties or fields.
+
+### Ignoring a member
+
+`[Ignore]` excludes a destination member from mapping and from configuration validation:
+
+```csharp
+using AutoMapper.Configuration.Annotations;
+
+[AutoMap(typeof(Order))]
+public class OrderDto
+{
+    [Ignore]
+    public decimal Total { get; set; }
+}
+```
+
+### Redirecting to a different source member
+
+`[SourceMember]` redirects the destination member to a differently named source member. You can pass the name as a string or use `nameof`:
+
+```csharp
+using AutoMapper.Configuration.Annotations;
+
+[AutoMap(typeof(Order))]
+public class OrderDto
+{
+    [SourceMember(nameof(Order.OrderTotal))]
+    public decimal Total { get; set; }
+}
+```
+
+<Warning>
+`[SourceMember]` can only reference a direct member of the source type. Path-based flattening (e.g., `"Customer.Address.City"`) is not supported through attributes—use `MapFrom` in fluent configuration for that.
+</Warning>
+
+### Additional member attributes
+
+<AccordionGroup>
+  <Accordion title="[MapAtRuntime]">
+    Prevents the execution plan for this member from being inlined during compilation. Useful for reducing compilation time on large maps.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [MapAtRuntime]
+        public AddressDto ShippingAddress { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="[NullSubstitute]">
+    Provides a fallback value when the source member resolves as null.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [NullSubstitute("N/A")]
+        public string CustomerName { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="[ValueConverter]">
+    Applies an `IValueConverter` implementation to this member. Combine with `[SourceMember]` to supply a different source member to the converter.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [ValueConverter(typeof(CurrencyFormatter))]
+        public string FormattedTotal { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="[ValueResolver]">
+    Applies a custom `IValueResolver` or `IMemberValueResolver` implementation. Combine with `[SourceMember]` to pass a specific source member to the resolver.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [ValueResolver(typeof(DiscountResolver))]
+        public decimal DiscountedTotal { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="[MappingOrder]">
+    Overrides the .NET runtime's default member enumeration order. Lower numbers are mapped first.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [MappingOrder(1)]
+        public string CustomerName { get; set; }
+
+        [MappingOrder(2)]
+        public decimal Total { get; set; }
+    }
+    ```
+  </Accordion>
+  <Accordion title="[UseExistingValue]">
+    Instructs AutoMapper to map into the existing destination member instance rather than creating a new one.
+
+    ```csharp
+    [AutoMap(typeof(Order))]
+    public class OrderDto
+    {
+        [UseExistingValue]
+        public AddressDto ShippingAddress { get; set; }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
